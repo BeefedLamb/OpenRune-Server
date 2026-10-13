@@ -1,6 +1,7 @@
 """OSRS model decoder (type 2 and type 3 formats, the only ones in rev 241 caches)."""
 
 import math
+import struct
 
 from cache import Buf
 
@@ -276,6 +277,6 @@ class ModelCache:
         if mid not in self.models:
             try:
                 self.models[mid] = decode_model(self.cache.archive_data(7, mid))
-            except KeyError:
+            except (KeyError, ValueError, IndexError, struct.error):
                 self.models[mid] = None
         return self.models[mid]

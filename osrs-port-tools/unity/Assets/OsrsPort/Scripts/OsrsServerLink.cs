@@ -32,6 +32,7 @@ namespace OsrsPort
         private Vector3Int lastSentTile = new Vector3Int(int.MinValue, 0, 0);
         private Vector3Int serverTile;
         private bool hasServerTile;
+        private bool pendingGroundSnap;
 
         private void Start()
         {
@@ -107,6 +108,20 @@ namespace OsrsPort
             while (incoming.TryDequeue(out var line))
                 Handle(line);
 
+            if (pendingGroundSnap && world != null && world.GroundReadyAt(transform.position))
+            {
+                pendingGroundSnap = false;
+                var probe = transform.position; probe.y = 60f;
+                if (Physics.Raycast(probe, Vector3.down, out var hit, 120f))
+                {
+                    var body = GetComponent<CharacterController>();
+                    bool wasEnabled = body != null && body.enabled;
+                    if (body != null) body.enabled = false;
+                    transform.position = new Vector3(probe.x, hit.point.y + 0.1f, probe.z);
+                    if (body != null) body.enabled = wasEnabled;
+                }
+            }
+
             if (!connected || !loggedIn || world == null)
                 return;
 
@@ -168,14 +183,11 @@ namespace OsrsPort
         private void MoveToTile(Vector3Int tile)
         {
             if (world == null) return;
-            var target = new Vector3(tile.x - world.BaseX + 0.5f, 40f, tile.y - world.BaseY + 0.5f);
-            if (target.x < -64f || target.x > 128f || target.z < -64f || target.z > 128f)
-            {
-                status += " (saved position is outside the exported area, staying here)";
-                return;
-            }
-            if (Physics.Raycast(target, Vector3.down, out var hit, 80f))
+            var target = new Vector3(tile.x - world.BaseX + 0.5f, 60f, tile.y - world.BaseY + 0.5f);
+            if (Physics.Raycast(target, Vector3.down, out var hit, 120f))
                 target.y = hit.point.y + 0.1f;
+            else
+                pendingGroundSnap = true;
             var body = GetComponent<CharacterController>();
             bool wasEnabled = body != null && body.enabled;
             if (body != null) body.enabled = false;

@@ -70,6 +70,13 @@ namespace OsrsPort
                 cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
             }
 
+            var loader = OsrsWorldLoader.Instance;
+            if (!noclip && loader != null && !loader.GroundReadyAt(transform.position))
+            {
+                verticalVelocity = 0f;
+                return;
+            }
+
             if (noclip)
             {
                 Vector3 dir = cameraPivot.forward * move.y + cameraPivot.right * move.x;
