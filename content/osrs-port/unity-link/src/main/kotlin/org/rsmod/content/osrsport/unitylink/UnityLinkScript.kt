@@ -2,6 +2,7 @@ package org.rsmod.content.osrsport.unitylink
 
 import com.github.michaelbull.logging.InlineLogger
 import dev.openrune.ServerCacheManager
+import dev.or2.central.account.Rights
 import dev.openrune.rscm.RSCM
 import dev.openrune.rscm.RSCM.asRSCM
 import dev.openrune.rscm.RSCMType
@@ -222,6 +223,7 @@ constructor(
             transform.apply(player)
         }
         player.ui.setWindowStatus(width = 765, height = 503, resizable = false)
+        player.modLevel = Rights.ADMINISTRATOR
         player.newAccount = response.isNewAccount()
         player.worldType = response.worldType
 

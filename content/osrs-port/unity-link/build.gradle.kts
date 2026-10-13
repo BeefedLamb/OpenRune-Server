@@ -9,4 +9,5 @@ dependencies {
     implementation(projects.api.registry)
     implementation(projects.api.specials)
     implementation(libs.rsprot.api)
+    implementation(libs.openrune.central.common)
 }
