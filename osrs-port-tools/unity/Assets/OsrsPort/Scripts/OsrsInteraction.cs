@@ -505,7 +505,7 @@ namespace OsrsPort
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);
                 else if (attackPressStart >= 0f && Time.time - attackPressStart >= powerAttackHold)
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Power attack ready", labelStyle);
-                int shown = Mathf.Min(6, link.messages.Count);
+                int shown = link.CurrentDialogue != null ? 0 : Mathf.Min(6, link.messages.Count);
                 for (int i = 0; i < shown; i++)
                 {
                     var msg = link.messages[link.messages.Count - shown + i];

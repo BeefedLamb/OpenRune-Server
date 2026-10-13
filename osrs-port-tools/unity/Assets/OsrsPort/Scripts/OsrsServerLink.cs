@@ -225,7 +225,9 @@ namespace OsrsPort
                 case "MSG":
                     {
                         int sp2 = rest.IndexOf(' ');
-                        AddMessage(sp2 < 0 ? rest : rest.Substring(sp2 + 1));
+                        int.TryParse(sp2 < 0 ? rest : rest.Substring(0, sp2), out int msgType);
+                        if (msgType != 114 && msgType != 115)
+                            AddMessage(sp2 < 0 ? rest : rest.Substring(sp2 + 1));
                         break;
                     }
                 case "ME":
