@@ -123,6 +123,7 @@ namespace OsrsPort
             var player = new GameObject("Player");
             player.transform.position = start;
             player.AddComponent<FirstPersonController>();
+            player.AddComponent<OsrsServerLink>();
         }
     }
 }
