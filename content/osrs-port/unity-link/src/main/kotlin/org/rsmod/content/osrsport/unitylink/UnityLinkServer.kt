@@ -110,6 +110,12 @@ class UnityLinkServer(private val port: Int) {
             }
             "CHAT" -> LinkCommand.Chat(connection, line.substring(4).trim())
             "DODGE" -> LinkCommand.Dodge(connection)
+            "OPHELD", "OPWORN" -> {
+                val slot = parts.getOrNull(1)?.toIntOrNull()
+                val op = parts.getOrNull(2)?.toIntOrNull()
+                if (slot == null || op == null) null
+                else LinkCommand.OpItem(connection, worn = parts[0].uppercase() == "OPWORN", slot = slot, op = op)
+            }
             "DLGC" -> LinkCommand.DialogueContinue(connection)
             "DLGS" -> {
                 val option = parts.getOrNull(1)?.toIntOrNull()
@@ -140,6 +146,9 @@ class LinkConnection(val socket: Socket) {
     val locZones: HashSet<Int> = HashSet()
     var blocking: Boolean = false
     var dodgeUntilTick: Int = 0
+    var lastInvLine: String = ""
+    var lastWornLine: String = ""
+    var lastStatsLine: String = ""
     var lastSpecEnergy: Int = -1
 
     private val writer =
@@ -189,6 +198,9 @@ sealed class LinkCommand {
     data class Stop(override val connection: LinkConnection) : LinkCommand()
 
     data class Dodge(override val connection: LinkConnection) : LinkCommand()
+
+    data class OpItem(override val connection: LinkConnection, val worn: Boolean, val slot: Int, val op: Int) :
+        LinkCommand()
 
     data class DialogueContinue(override val connection: LinkConnection) : LinkCommand()
 

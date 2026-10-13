@@ -6,6 +6,7 @@ import dev.or2.central.account.Rights
 import dev.openrune.rscm.RSCM
 import dev.openrune.rscm.RSCM.asRSCM
 import dev.openrune.rscm.RSCMType
+import dev.openrune.types.aconverted.interf.IfButtonOp
 import jakarta.inject.Inject
 import kotlin.math.abs
 import kotlin.math.max
@@ -18,9 +19,12 @@ import org.rsmod.api.account.loader.request.isNewAccount
 import org.rsmod.api.game.process.GameLifecycle
 import org.rsmod.api.player.events.PlayerHitEvents
 import org.rsmod.api.player.input.ResumePauseButtonInput
+import org.rsmod.api.player.interact.HeldInteractions
 import org.rsmod.api.player.interact.LocInteractions
 import org.rsmod.api.player.interact.NpcInteractions
+import org.rsmod.api.player.interact.WornInteractions
 import org.rsmod.api.player.output.mes
+import org.rsmod.api.player.protect.ProtectedAccessLauncher
 import org.rsmod.api.player.protect.clearPendingAction
 import org.rsmod.api.player.stat.baseHitpointsLvl
 import org.rsmod.api.player.stat.hitpoints
@@ -54,6 +58,8 @@ import org.rsmod.game.loc.BoundLocInfo
 import org.rsmod.game.loc.LocInfo
 import org.rsmod.game.map.collision.isZoneValid
 import org.rsmod.game.hit.HitType
+import org.rsmod.game.interact.HeldOp
+import org.rsmod.game.inv.Inventory
 import org.rsmod.game.movement.MoveSpeed
 import org.rsmod.game.seq.EntitySeq
 import org.rsmod.game.ui.Component
@@ -70,7 +76,9 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * `STOP` (drop the current interaction), `SPEC` (arm the weapon special for the next attack),
  * `BLOCK 1|0` (shield block held/released), `DODGE` (one tick of invulnerability), `CHAT text`
  * (`::` prefix runs a server command), `DLGC` (click-to-continue), `DLGS n` (pick dialogue option
- * n), `BYE`. Dialogues themselves arrive as `DLG ...` lines, see [LinkClient].
+ * n), `OPHELD slot op` / `OPWORN slot op` (item options, op 10 = examine), `BYE`.
+ * Dialogues arrive as `DLG ...` lines (see [LinkClient]); the backpack, equipment and skills as
+ * `INV slot|id|count|name|op1/../op5;...`, `WORN ...` (same shape) and `STATS id|name|level|base|xp;...`.
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
  * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
  * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
@@ -97,6 +105,9 @@ constructor(
     private val zoneUpdates: ZoneUpdateMap,
     private val specialsReg: SpecialAttackRegistry,
     private val cheats: CheatCommandMap,
+    private val heldInteractions: HeldInteractions,
+    private val wornInteractions: WornInteractions,
+    private val protectedAccess: ProtectedAccessLauncher,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
@@ -174,6 +185,7 @@ constructor(
             is LinkCommand.Special -> armSpecial(connection)
             is LinkCommand.Block -> connection.blocking = command.blocking
             is LinkCommand.Dodge -> connection.dodgeUntilTick = currentTick + DODGE_TICKS
+            is LinkCommand.OpItem -> opItem(connection, command)
             is LinkCommand.DialogueContinue -> resumeDialogue(connection, -1)
             is LinkCommand.DialogueSelect -> resumeDialogue(connection, command.option)
             is LinkCommand.Bye -> {
@@ -394,6 +406,56 @@ constructor(
         }
     }
 
+    private fun opItem(connection: LinkConnection, command: LinkCommand.OpItem) {
+        val player = connection.player ?: return
+        val inventory = if (command.worn) player.worn else player.inv
+        if (command.slot !in 0 until inventory.size || inventory[command.slot] == null) {
+            return
+        }
+        if (command.op == EXAMINE_OP) {
+            if (command.worn) wornInteractions.examine(player, inventory, command.slot)
+            else heldInteractions.examine(player, inventory, command.slot)
+            return
+        }
+        if (player.isAccessProtected) {
+            connection.send("MSG 0 You can't do that right now.")
+            return
+        }
+        if (command.worn) {
+            val op = interfaceButtonOp(command.op) ?: return
+            protectedAccess.launch(player) {
+                clearPendingAction()
+                wornInteractions.interact(this, inventory, command.slot, op)
+            }
+        } else {
+            val op = heldOp(command.op) ?: return
+            protectedAccess.launch(player) {
+                clearPendingAction()
+                heldInteractions.interact(this, inventory, command.slot, op)
+            }
+        }
+    }
+
+    private fun heldOp(op: Int): HeldOp? =
+        when (op) {
+            1 -> HeldOp.Op1
+            2 -> HeldOp.Op2
+            3 -> HeldOp.Op3
+            4 -> HeldOp.Op4
+            5 -> HeldOp.Op5
+            else -> null
+        }
+
+    private fun interfaceButtonOp(op: Int): IfButtonOp? =
+        when (op) {
+            1 -> IfButtonOp.Op1
+            2 -> IfButtonOp.Op2
+            3 -> IfButtonOp.Op3
+            4 -> IfButtonOp.Op4
+            5 -> IfButtonOp.Op5
+            else -> null
+        }
+
     /** Plays the chatbox modal's pause button, like a click on "Click here to continue". */
     private fun resumeDialogue(connection: LinkConnection, option: Int) {
         val player = connection.player ?: return
@@ -472,7 +534,52 @@ constructor(
             }
             sendNpcs(connection, player)
             sendLocs(connection, player)
+            sendInventories(connection, player)
         }
+    }
+
+    private fun sendInventories(connection: LinkConnection, player: Player) {
+        val inv = inventoryLine("INV", player.inv)
+        if (inv != connection.lastInvLine) {
+            connection.lastInvLine = inv
+            connection.send(inv)
+        }
+        val worn = inventoryLine("WORN", player.worn)
+        if (worn != connection.lastWornLine) {
+            connection.lastWornLine = worn
+            connection.send(worn)
+        }
+        val stats = StringBuilder("STATS ")
+        for (stat in ServerCacheManager.getStats().values) {
+            if (stat.unreleased) {
+                continue
+            }
+            val name = RSCM.getReverseMapping(RSCMType.STAT, stat.id)
+            stats.append(stat.id).append('|').append(stat.displayName.ifEmpty { name.substringAfter('.') })
+                .append('|').append(player.statMap.getCurrentLevel(name).toInt())
+                .append('|').append(player.statMap.getBaseLevel(name).toInt())
+                .append('|').append(player.statMap.getXP(name)).append(';')
+        }
+        val statsLine = stats.toString()
+        if (statsLine != connection.lastStatsLine) {
+            connection.lastStatsLine = statsLine
+            connection.send(statsLine)
+        }
+    }
+
+    private fun inventoryLine(prefix: String, inventory: Inventory): String {
+        val sb = StringBuilder(prefix).append(' ')
+        for (slot in 0 until inventory.size) {
+            val obj = inventory[slot] ?: continue
+            val type = ServerCacheManager.getItem(obj.id)
+            val name = (type?.name ?: "null").replace('|', '/').replace(';', ',')
+            val ops =
+                (type?.interfaceOptions ?: emptyList()).take(5)
+                    .joinToString("/") { (it ?: "").replace('/', '-').replace('|', '-').replace(';', ',') }
+            sb.append(slot).append('|').append(obj.id).append('|').append(obj.count).append('|')
+                .append(name).append('|').append(ops).append(';')
+        }
+        return sb.toString()
     }
 
     /**
@@ -583,6 +690,8 @@ constructor(
         const val NPC_ZONE_RADIUS = 2
 
         const val CHAT_MODAL = "component.chatbox:chatmodal"
+
+        const val EXAMINE_OP = 10
 
         val PAUSE_COMPONENTS =
             mapOf(
