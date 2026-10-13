@@ -20,6 +20,8 @@ namespace OsrsPort
         public struct NpcState
         {
             public int index, id, x, z, level, hp, maxHp;
+            /// <summary>Set for other players (bots); they draw with a stand-in model and no options.</summary>
+            public string playerName;
         }
 
         public static OsrsServerLink Instance { get; private set; }
@@ -41,6 +43,9 @@ namespace OsrsPort
         public bool HasServerTile => hasServerTile;
         public readonly List<string> messages = new List<string>();
         public readonly List<NpcState> npcs = new List<NpcState>();
+
+        /// <summary>Latest public chat line per speaker, for overhead text: name -> (text, time).</summary>
+        public readonly Dictionary<string, (string text, float time)> overheadChat = new Dictionary<string, (string, float)>();
 
         public class Dialogue
         {
@@ -226,8 +231,14 @@ namespace OsrsPort
                     {
                         int sp2 = rest.IndexOf(' ');
                         int.TryParse(sp2 < 0 ? rest : rest.Substring(0, sp2), out int msgType);
+                        string msgText = sp2 < 0 ? rest : rest.Substring(sp2 + 1);
+                        if (msgType == 2)
+                        {
+                            int colon = msgText.IndexOf(": ");
+                            if (colon > 0) overheadChat[msgText.Substring(0, colon)] = (msgText.Substring(colon + 2), Time.time);
+                        }
                         if (msgType != 114 && msgType != 115)
-                            AddMessage(sp2 < 0 ? rest : rest.Substring(sp2 + 1));
+                            AddMessage(msgText);
                         break;
                     }
                 case "ME":
@@ -260,6 +271,9 @@ namespace OsrsPort
                     }
                 case "NPCS":
                     ParseNpcs(rest);
+                    break;
+                case "PLAYERS":
+                    ParsePlayers(rest);
                     break;
                 case "LOC":
                     HandleLoc(rest);
@@ -351,22 +365,54 @@ namespace OsrsPort
             if (messages.Count > 60) messages.RemoveAt(0);
         }
 
-        private void ParseNpcs(string rest)
+        /// <summary>Other players near us; slots are offset so they never collide with NPC indices.</summary>
+        public const int PlayerIndexOffset = 1000000;
+        public const int PlayerAvatarNpcId = 3106;
+        private readonly List<NpcState> players = new List<NpcState>();
+
+        private void ParsePlayers(string rest)
+        {
+            players.Clear();
+            foreach (var e in rest.Split(';'))
+            {
+                if (e.Length == 0) continue;
+                var f = e.Split('|');
+                if (f.Length < 7) continue;
+                players.Add(new NpcState
+                {
+                    index = PlayerIndexOffset + int.Parse(f[0]), id = PlayerAvatarNpcId, playerName = f[1],
+                    x = int.Parse(f[2]), z = int.Parse(f[3]), level = int.Parse(f[4]), hp = int.Parse(f[5]), maxHp = int.Parse(f[6]),
+                });
+            }
+            MergeNpcLists();
+        }
+
+        private readonly List<NpcState> npcOnly = new List<NpcState>();
+
+        private void MergeNpcLists()
         {
             npcs.Clear();
+            npcs.AddRange(npcOnly);
+            npcs.AddRange(players);
+            NpcRevision++;
+        }
+
+        private void ParseNpcs(string rest)
+        {
+            npcOnly.Clear();
             var entries = rest.Split(';');
             foreach (var e in entries)
             {
                 if (e.Length == 0) continue;
                 var f = e.Split(',');
                 if (f.Length < 7) continue;
-                npcs.Add(new NpcState
+                npcOnly.Add(new NpcState
                 {
                     index = int.Parse(f[0]), id = int.Parse(f[1]), x = int.Parse(f[2]), z = int.Parse(f[3]),
                     level = int.Parse(f[4]), hp = int.Parse(f[5]), maxHp = int.Parse(f[6]),
                 });
             }
-            NpcRevision++;
+            MergeNpcLists();
         }
 
         private static bool TryParseTile(string rest, out Vector3Int tile)

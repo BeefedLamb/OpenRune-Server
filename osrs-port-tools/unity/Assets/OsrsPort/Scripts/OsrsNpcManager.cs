@@ -76,7 +76,7 @@ namespace OsrsPort
                     v.go.transform.position = target;
                     visuals[s.index] = v;
                 }
-                else if (v.reference.id != s.id)
+                else if (v.reference.id != s.id || v.reference.displayName != (s.playerName ?? v.reference.displayName))
                 {
                     Destroy(v.go);
                     v = Create(s, def);
@@ -123,6 +123,14 @@ namespace OsrsPort
             reference.combatLevel = def != null ? def.combatLevel : -1;
             reference.size = def != null ? def.size : 1;
             reference.ops = def != null ? def.ops : new string[5];
+            if (s.playerName != null)
+            {
+                reference.displayName = s.playerName;
+                reference.combatLevel = -1;
+                reference.ops = new string[5];
+                reference.isPlayer = true;
+                go.name = $"player_{s.playerName}";
+            }
 
             var mesh = GetMesh(s.id);
             float height = 1.8f;
@@ -183,6 +191,7 @@ namespace OsrsPort
         public int index, id, combatLevel, size, hp = -1, maxHp = -1;
         public float height = 1.8f;
         public float lastAnimTime = -10f;
+        public bool isPlayer;
         public int lastAnimId = -1;
         public string displayName;
         public string[] ops;

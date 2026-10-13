@@ -523,6 +523,22 @@ namespace OsrsPort
 
             foreach (var npc in OsrsNpcRef.All)
             {
+                if (npc.isPlayer && link != null)
+                {
+                    float dist = Vector3.Distance(npc.transform.position, cam.transform.position);
+                    var head = cam.WorldToScreenPoint(npc.transform.position + Vector3.up * (npc.height + 0.35f));
+                    if (head.z > 0 && dist < 25f)
+                    {
+                        float y = Screen.height - head.y;
+                        Shadowed(new Rect(head.x - 100, y - 10, 200, 20), npc.displayName, smallStyle, TextAnchor.MiddleCenter);
+                        if (link.overheadChat.TryGetValue(npc.displayName, out var said) && Time.time - said.time < 5f)
+                        {
+                            var chatStyle = new GUIStyle(smallStyle) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+                            chatStyle.normal.textColor = Color.yellow;
+                            Shadowed(new Rect(head.x - 200, y - 30, 400, 20), said.text, chatStyle);
+                        }
+                    }
+                }
                 foreach (var h in npc.hits)
                 {
                     float age = Time.time - h.time;
