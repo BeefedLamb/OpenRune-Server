@@ -108,6 +108,7 @@ class UnityLinkServer(private val port: Int) {
                 val op = parts.getOrNull(2)?.toIntOrNull()
                 if (idx == null || op == null) null else LinkCommand.OpNpc(connection, idx, op)
             }
+            "CHAT" -> LinkCommand.Chat(connection, line.substring(4).trim())
             "STOP" -> LinkCommand.Stop(connection)
             "SPEC" -> LinkCommand.Special(connection)
             "BLOCK" -> LinkCommand.Block(connection, parts.getOrNull(1) == "1")
@@ -179,6 +180,8 @@ sealed class LinkCommand {
     data class OpNpc(override val connection: LinkConnection, val index: Int, val op: Int) : LinkCommand()
 
     data class Stop(override val connection: LinkConnection) : LinkCommand()
+
+    data class Chat(override val connection: LinkConnection, val text: String) : LinkCommand()
 
     data class Special(override val connection: LinkConnection) : LinkCommand()
 

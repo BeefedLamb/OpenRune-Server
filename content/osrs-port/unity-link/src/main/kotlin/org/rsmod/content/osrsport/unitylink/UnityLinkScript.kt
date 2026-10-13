@@ -37,6 +37,7 @@ import org.rsmod.api.specials.SpecialAttack
 import org.rsmod.api.specials.SpecialAttackRegistry
 import org.rsmod.api.specials.SpecialAttackType
 import org.rsmod.events.EventBus
+import org.rsmod.game.cheat.CheatCommandMap
 import org.rsmod.game.entity.NpcList
 import org.rsmod.game.entity.Player
 import org.rsmod.game.entity.player.SessionStateEvent
@@ -61,7 +62,8 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  *
  * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
  * `STOP` (drop the current interaction), `SPEC` (arm the weapon special for the next attack),
- * `BLOCK 1|0` (shield block held/released), `BYE`.
+ * `BLOCK 1|0` (shield block held/released), `CHAT text` (`::` prefix runs a server command),
+ * `BYE`.
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
  * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
  * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
@@ -87,6 +89,7 @@ constructor(
     private val npcRepo: NpcRepository,
     private val zoneUpdates: ZoneUpdateMap,
     private val specialsReg: SpecialAttackRegistry,
+    private val cheats: CheatCommandMap,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
@@ -154,6 +157,7 @@ constructor(
             is LinkCommand.OpLoc -> opLoc(connection, command)
             is LinkCommand.OpNpc -> opNpc(connection, command)
             is LinkCommand.Stop -> stop(connection)
+            is LinkCommand.Chat -> chat(connection, command.text)
             is LinkCommand.Special -> armSpecial(connection)
             is LinkCommand.Block -> connection.blocking = command.blocking
             is LinkCommand.Bye -> {
@@ -350,6 +354,27 @@ constructor(
         player.clearPendingAction(eventBus)
         player.faceNpc(npc)
         player.interaction = interaction
+    }
+
+    private fun chat(connection: LinkConnection, text: String) {
+        val player = connection.player ?: return
+        if (text.isEmpty()) {
+            return
+        }
+        if (text.startsWith("::")) {
+            val split = text.substring(2).trim().lowercase().split(' ').filter { it.isNotEmpty() }
+            if (split.isEmpty()) {
+                return
+            }
+            val ran = cheats.execute(player, split[0], split.drop(1))
+            if (!ran) {
+                connection.send("MSG 0 Unknown command: ${split[0]}")
+            }
+            return
+        }
+        for (other in connections) {
+            other.send("MSG 2 ${player.displayName}: $text")
+        }
     }
 
     private fun stop(connection: LinkConnection) {

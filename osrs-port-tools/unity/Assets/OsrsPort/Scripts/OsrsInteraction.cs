@@ -36,6 +36,12 @@ namespace OsrsPort
         private OsrsWorldLoader.Placement targetLoc;
         private bool hasTarget;
         private bool inRange;
+        /// <summary>True while the chat box has keyboard focus; movement scripts ignore input then.</summary>
+        public static bool TextInputActive { get; private set; }
+        private bool chatOpen;
+        private string chatText = "";
+        private bool focusChat;
+        private OsrsNpcRef lockedNpc;
         private int engagedNpc = -1;
         private float lastAimedAtEngaged;
         private float attackPressStart = -1f;
@@ -53,6 +59,10 @@ namespace OsrsPort
         {
             if (cam == null) cam = GetComponentInChildren<Camera>();
             if (cam == null || world == null) return;
+            ReadChatInput();
+            if (chatOpen) { TextInputActive = true; return; }
+            TextInputActive = false;
+            ReadLockOnInput();
             FindTarget();
             ReadInput();
             ReadCombatInput();
@@ -142,10 +152,93 @@ namespace OsrsPort
             fpc.cameraOffsetEuler = Vector3.Lerp(fpc.cameraOffsetEuler, target, blocking ? 0.2f : 1f);
         }
 
+        /// <summary>Enter opens the chat box; Enter again sends (a `::` prefix runs a server command), Escape cancels.</summary>
+        private void ReadChatInput()
+        {
+            bool enter, escape;
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            enter = kb != null && (kb.enterKey.wasPressedThisFrame || kb.numpadEnterKey.wasPressedThisFrame);
+            escape = kb != null && kb.escapeKey.wasPressedThisFrame;
+#else
+            enter = Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+            escape = Input.GetKeyDown(KeyCode.Escape);
+#endif
+            if (!chatOpen)
+            {
+                if (enter && Cursor.lockState == CursorLockMode.Locked) { chatOpen = true; chatText = ""; focusChat = true; }
+                return;
+            }
+            if (escape) { chatOpen = false; return; }
+            if (enter)
+            {
+                var text = chatText.Trim();
+                chatOpen = false;
+                if (text.Length == 0) return;
+                if (link != null && link.LoggedIn) link.Send("CHAT " + text);
+                else link?.messages.Add("Not connected to the server.");
+            }
+        }
+
+        /// <summary>Tab locks the camera onto the nearest enemy in view (Tab again cycles, Tab with none in view releases).</summary>
+        private void ReadLockOnInput()
+        {
+            if (Cursor.lockState != CursorLockMode.Locked) return;
+            bool tab;
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            tab = kb != null && kb.tabKey.wasPressedThisFrame;
+#else
+            tab = Input.GetKeyDown(KeyCode.Tab);
+#endif
+            if (lockedNpc != null && (!lockedNpc.isActiveAndEnabled || lockedNpc.hp == 0))
+                lockedNpc = null;
+            if (tab)
+                lockedNpc = NextLockTarget(lockedNpc);
+            if (lockedNpc != null)
+            {
+                var fpc = GetComponent<FirstPersonController>();
+                var aim = lockedNpc.transform.position + Vector3.up * (lockedNpc.height * 0.6f);
+                if (fpc != null) fpc.LookToward(aim, 10f * Time.deltaTime);
+            }
+        }
+
+        private OsrsNpcRef NextLockTarget(OsrsNpcRef current)
+        {
+            OsrsNpcRef best = null;
+            float bestScore = float.MaxValue;
+            var fwd = cam.transform.forward; fwd.y = 0f; fwd.Normalize();
+            foreach (var npc in OsrsNpcRef.All)
+            {
+                if (npc == current || npc.ops == null || System.Array.IndexOf(npc.ops, "Attack") < 0) continue;
+                var to = npc.transform.position - transform.position;
+                float dist = new Vector3(to.x, 0f, to.z).magnitude;
+                if (dist > 12f) continue;
+                float ang = Vector3.Angle(fwd, new Vector3(to.x, 0f, to.z));
+                if (current == null && ang > 70f) continue;
+                float score = dist + ang * 0.05f;
+                if (score < bestScore) { bestScore = score; best = npc; }
+            }
+            return best;
+        }
+
         private void FindTarget()
         {
             hasTarget = false;
             targetNpc = null;
+            if (lockedNpc != null)
+            {
+                var me0 = link != null ? link.CurrentTile() : new Vector3Int(Mathf.FloorToInt(transform.position.x), Mathf.FloorToInt(transform.position.z), 0);
+                targetNpc = lockedNpc;
+                targetIsNpc = true;
+                targetName = lockedNpc.combatLevel > 0 ? $"{lockedNpc.displayName} (level {lockedNpc.combatLevel})" : lockedNpc.displayName;
+                targetOps = lockedNpc.ops;
+                hasTarget = true;
+                int lx = Mathf.FloorToInt(lockedNpc.transform.position.x - lockedNpc.size * 0.5f);
+                int lz = Mathf.FloorToInt(lockedNpc.transform.position.z - lockedNpc.size * 0.5f);
+                inRange = Distance(me0.x, me0.y, lx, lz, lockedNpc.size, lockedNpc.size) <= opRange;
+                return;
+            }
             var ray = new Ray(cam.transform.position, cam.transform.forward);
             if (!Physics.Raycast(ray, out var hit, reach))
                 return;
@@ -275,6 +368,15 @@ namespace OsrsPort
                     Shadowed(new Rect(cx - 300, cy + 58, 600, 20), $"HP {targetNpc.hp}/{targetNpc.maxHp}", smallStyle, TextAnchor.UpperCenter);
             }
 
+            if (chatOpen)
+            {
+                GUI.SetNextControlName("osrs_chat");
+                GUI.color = new Color(0f, 0f, 0f, 0.6f);
+                GUI.Box(new Rect(8, Screen.height - 212, 704, 26), GUIContent.none);
+                GUI.color = Color.white;
+                chatText = GUI.TextField(new Rect(12, Screen.height - 209, 696, 20), chatText, 120);
+                if (focusChat) { GUI.FocusControl("osrs_chat"); focusChat = false; }
+            }
             if (link != null)
             {
                 if (link.Hp >= 0)
@@ -294,6 +396,17 @@ namespace OsrsPort
                     GUI.Box(new Rect(12, Screen.height - 60, 200f * Mathf.Clamp01(link.SpecEnergy / 1000f), 14), GUIContent.none);
                     GUI.color = Color.white;
                     Shadowed(new Rect(12, Screen.height - 61, 200, 16), $"Special {link.SpecEnergy / 10}%", smallStyle, TextAnchor.MiddleCenter);
+                }
+                if (lockedNpc != null)
+                {
+                    var sp = cam.WorldToScreenPoint(lockedNpc.transform.position + Vector3.up * (lockedNpc.height * 0.6f));
+                    if (sp.z > 0)
+                    {
+                        GUI.color = new Color(1f, 0.85f, 0.2f);
+                        GUI.Box(new Rect(sp.x - 7, Screen.height - sp.y - 7, 14, 14), GUIContent.none);
+                        GUI.color = Color.white;
+                    }
+                    Shadowed(new Rect(cx - 100, cy + 112, 200, 20), "[Tab] locked on", smallStyle, TextAnchor.UpperCenter);
                 }
                 if (blocking)
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);

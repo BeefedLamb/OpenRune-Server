@@ -53,6 +53,7 @@ namespace OsrsPort
 
         private void Update()
         {
+            if (OsrsInteraction.TextInputActive) return;
             ReadInput(out var move, out var look, out bool run, out bool jump, out bool up, out bool down,
                 out bool toggleNoclip, out bool escape, out bool click);
 
@@ -103,6 +104,21 @@ namespace OsrsPort
 
             if (transform.position.y < -50f)
                 transform.position = new Vector3(transform.position.x, 30f, transform.position.z);
+        }
+
+        /// <summary>Turns the body and camera toward a world point; t = 1 snaps, smaller values ease.</summary>
+        public void LookToward(Vector3 point, float t)
+        {
+            var eye = cameraPivot.position;
+            var dir = point - eye;
+            var flat = new Vector3(dir.x, 0f, dir.z);
+            if (flat.sqrMagnitude < 0.0001f) return;
+            float yaw = Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg;
+            float wantPitch = -Mathf.Atan2(dir.y, flat.magnitude) * Mathf.Rad2Deg;
+            float curYaw = transform.eulerAngles.y;
+            transform.rotation = Quaternion.Euler(0f, Mathf.LerpAngle(curYaw, yaw, t), 0f);
+            pitch = Mathf.Clamp(Mathf.Lerp(pitch, wantPitch, t), -89f, 89f);
+            cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f) + cameraOffsetEuler;
         }
 
         private static void LockCursor(bool locked)
