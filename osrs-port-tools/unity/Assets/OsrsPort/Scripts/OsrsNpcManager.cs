@@ -53,6 +53,8 @@ namespace OsrsPort
                         v.go.transform.rotation = Quaternion.LookRotation(dir);
                 }
                 v.go.transform.position = pos;
+                float bob = Mathf.Clamp01((t - v.reference.lastAnimTime) / 0.4f);
+                v.go.transform.localScale = new Vector3(1f, 1f + 0.08f * Mathf.Sin(bob * Mathf.PI), 1f);
             }
         }
 
@@ -177,6 +179,8 @@ namespace OsrsPort
 
         public int index, id, combatLevel, size, hp = -1, maxHp = -1;
         public float height = 1.8f;
+        public float lastAnimTime = -10f;
+        public int lastAnimId = -1;
         public string displayName;
         public string[] ops;
         public readonly List<(float time, int damage)> hits = new List<(float, int)>();

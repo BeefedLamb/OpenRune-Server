@@ -19,7 +19,11 @@ import org.rsmod.api.player.output.mes
 import org.rsmod.api.player.protect.clearPendingAction
 import org.rsmod.api.player.stat.baseHitpointsLvl
 import org.rsmod.api.player.stat.hitpoints
+import org.rsmod.api.player.lefthand
+import org.rsmod.api.player.righthand
 import org.rsmod.api.player.vars.boolVarBit
+import org.rsmod.api.player.vars.enumVarp
+import org.rsmod.api.player.vars.intVarp
 import org.rsmod.api.realm.Realm
 import org.rsmod.api.registry.account.AccountRegistry
 import org.rsmod.api.registry.loc.LocRegistry
@@ -29,6 +33,9 @@ import org.rsmod.api.registry.zone.ZoneUpdateMap
 import org.rsmod.api.repo.npc.NpcRepository
 import org.rsmod.api.script.onCommand
 import org.rsmod.api.script.onEvent
+import org.rsmod.api.specials.SpecialAttack
+import org.rsmod.api.specials.SpecialAttackRegistry
+import org.rsmod.api.specials.SpecialAttackType
 import org.rsmod.events.EventBus
 import org.rsmod.game.entity.NpcList
 import org.rsmod.game.entity.Player
@@ -40,7 +47,9 @@ import org.rsmod.game.interact.InteractionOp
 import org.rsmod.game.loc.BoundLocInfo
 import org.rsmod.game.loc.LocInfo
 import org.rsmod.game.map.collision.isZoneValid
+import org.rsmod.game.hit.HitType
 import org.rsmod.game.movement.MoveSpeed
+import org.rsmod.game.seq.EntitySeq
 import org.rsmod.map.CoordGrid
 import org.rsmod.map.zone.ZoneKey
 import org.rsmod.plugin.scripts.PluginScript
@@ -51,9 +60,12 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * Lets the Unity client play as a normal server-side player without the OSRS game protocol.
  *
  * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
- * `BYE`. Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`,
- * `ME hp maxHp`, `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`,
- * `LOC add id x z level shape rot` / `LOC del x z level shape rot`, `ERROR text`.
+ * `STOP` (drop the current interaction), `SPEC` (arm the weapon special for the next attack),
+ * `BLOCK 1|0` (shield block held/released), `BYE`.
+ * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
+ * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
+ * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
+ * `LOC del x z level shape rot`, `ERROR text`.
  *
  * The Unity client owns the player's position: the server never walks the link player, it only
  * teleports it where Unity says it stands. Interactions therefore work by range checks, not by
@@ -74,6 +86,7 @@ constructor(
     private val npcList: NpcList,
     private val npcRepo: NpcRepository,
     private val zoneUpdates: ZoneUpdateMap,
+    private val specialsReg: SpecialAttackRegistry,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
@@ -91,6 +104,12 @@ constructor(
         onEvent<GameLifecycle.LateCycle> { syncClients() }
         onEvent<PlayerHitEvents.Impact> {
             connectionOf(player)?.send("HIT me 0 ${hit.damage}")
+        }
+        onEvent<PlayerHitEvents.Modify> {
+            val connection = connectionOf(player) ?: return@onEvent
+            if (connection.blocking && player.lefthand != null && hit.type != HitType.Magic) {
+                hit.damage = hit.damage * (100 - BLOCK_REDUCTION_PERCENT) / 100
+            }
         }
 
         onCommand("where") {
@@ -134,6 +153,9 @@ constructor(
             is LinkCommand.Position -> move(connection, command.x, command.z, command.level)
             is LinkCommand.OpLoc -> opLoc(connection, command)
             is LinkCommand.OpNpc -> opNpc(connection, command)
+            is LinkCommand.Stop -> stop(connection)
+            is LinkCommand.Special -> armSpecial(connection)
+            is LinkCommand.Block -> connection.blocking = command.blocking
             is LinkCommand.Bye -> {
                 connection.player?.forceDisconnect = true
                 connection.close()
@@ -228,7 +250,7 @@ constructor(
         connection.lastSentTile = player.coords
         val c = player.coords
         connection.send("WELCOME ${c.x} ${c.z} ${c.level}")
-        connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl}")
+        connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl} ${player.specialEnergy}")
         logger.info { "Unity link: ${player.username} logged in at $c (slot $slot)" }
     }
 
@@ -330,6 +352,27 @@ constructor(
         player.interaction = interaction
     }
 
+    private fun stop(connection: LinkConnection) {
+        val player = connection.player ?: return
+        if (player.isDelayed) {
+            return
+        }
+        player.clearInteraction()
+        player.resetFaceEntity()
+    }
+
+    /** Mirrors the special attack orb: arms a combat special so the next attack uses it. */
+    private fun armSpecial(connection: LinkConnection) {
+        val player = connection.player ?: return
+        val weapon = player.righthand
+        if (weapon == null || specialsReg[weapon] !is SpecialAttack.Combat) {
+            player.specialType = SpecialAttackType.None
+            connection.send("MSG 0 This weapon does not have a special attack.")
+            return
+        }
+        player.specialType = SpecialAttackType.Weapon
+    }
+
     private fun interactionOp(op: Int): InteractionOp? =
         when (op) {
             1 -> InteractionOp.Op1
@@ -364,10 +407,15 @@ constructor(
             }
             val hp = player.hitpoints
             val maxHp = player.baseHitpointsLvl
-            if (hp != connection.lastHp || maxHp != connection.lastMaxHp) {
+            val spec = player.specialEnergy
+            if (hp != connection.lastHp || maxHp != connection.lastMaxHp || spec != connection.lastSpecEnergy) {
                 connection.lastHp = hp
                 connection.lastMaxHp = maxHp
-                connection.send("ME $hp $maxHp")
+                connection.lastSpecEnergy = spec
+                connection.send("ME $hp $maxHp $spec")
+            }
+            if (player.pendingSequence != EntitySeq.NULL) {
+                connection.send("ANIM ${player.pendingSequence.id}")
             }
             sendNpcs(connection, player)
             sendLocs(connection, player)
@@ -451,6 +499,9 @@ constructor(
             sb.append(npc.slotId).append(',').append(npc.visType.id).append(',')
                 .append(c.x).append(',').append(c.z).append(',').append(c.level).append(',')
                 .append(npc.hitpoints).append(',').append(npc.visType.hitpoints).append(';')
+            if (npc.pendingSequence != EntitySeq.NULL) {
+                connection.send("NANIM ${npc.slotId} ${npc.pendingSequence.id}")
+            }
             count++
             if (count >= MAX_NPCS) {
                 break
@@ -481,9 +532,14 @@ constructor(
 
         const val LOC_ZONE_RADIUS = 3
 
+        /** Damage taken off melee and ranged hits while holding a shield block. */
+        const val BLOCK_REDUCTION_PERCENT = 50
+
         const val MAX_NPCS = 80
 
         private var Player.newAccount by boolVarBit("varbit.new_player_account")
+        private var Player.specialType by enumVarp<SpecialAttackType>("varp.sa_attack")
+        private val Player.specialEnergy by intVarp("varp.sa_energy")
 
         private fun chebyshev(a: CoordGrid, b: CoordGrid): Int = max(abs(a.x - b.x), abs(a.z - b.z))
     }

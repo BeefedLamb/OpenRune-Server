@@ -31,6 +31,11 @@ namespace OsrsPort
         public bool LoggedIn { get; private set; }
         public int Hp { get; private set; } = -1;
         public int MaxHp { get; private set; } = -1;
+        /// <summary>Special attack energy in tenths of a percent (0-1000).</summary>
+        public int SpecEnergy { get; private set; } = -1;
+        /// <summary>Time of the player's last attack animation, for first-person swing feedback.</summary>
+        public float LastAnimTime { get; private set; } = -10f;
+        public int LastAnimId { get; private set; } = -1;
         public string Status => status;
         public Vector3Int ServerTile => serverTile;
         public bool HasServerTile => hasServerTile;
@@ -202,6 +207,18 @@ namespace OsrsPort
                         {
                             Hp = hp; MaxHp = max;
                         }
+                        if (p.Length >= 3 && int.TryParse(p[2], out int spec)) SpecEnergy = spec;
+                        break;
+                    }
+                case "ANIM":
+                    if (int.TryParse(rest, out int anim)) { LastAnimId = anim; LastAnimTime = Time.time; }
+                    break;
+                case "NANIM":
+                    {
+                        var p = rest.Split(' ');
+                        if (p.Length >= 2 && int.TryParse(p[0], out int idx) && int.TryParse(p[1], out int seq))
+                            foreach (var npc in OsrsNpcRef.All)
+                                if (npc.index == idx) { npc.lastAnimTime = Time.time; npc.lastAnimId = seq; }
                         break;
                     }
                 case "HIT":

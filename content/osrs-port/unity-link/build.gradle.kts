@@ -7,5 +7,6 @@ dependencies {
     implementation(projects.api.account)
     implementation(projects.api.realm)
     implementation(projects.api.registry)
+    implementation(projects.api.specials)
     implementation(libs.rsprot.api)
 }

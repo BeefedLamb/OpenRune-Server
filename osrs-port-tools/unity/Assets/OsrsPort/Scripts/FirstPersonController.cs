@@ -19,6 +19,8 @@ namespace OsrsPort
         public float gravity = -20f;
         public float lookSensitivity = 0.12f;
         public float eyeHeight = 1.35f;
+        /// <summary>Extra camera rotation (pitch, yaw, roll) other scripts add for swings and blocking.</summary>
+        public Vector3 cameraOffsetEuler;
 
         private CharacterController body;
         private Transform cameraPivot;
@@ -67,7 +69,7 @@ namespace OsrsPort
             {
                 transform.Rotate(0f, look.x * lookSensitivity, 0f);
                 pitch = Mathf.Clamp(pitch - look.y * lookSensitivity, -89f, 89f);
-                cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f);
+                cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f) + cameraOffsetEuler;
             }
 
             var loader = OsrsWorldLoader.Instance;

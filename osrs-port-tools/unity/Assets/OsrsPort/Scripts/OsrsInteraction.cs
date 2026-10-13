@@ -11,11 +11,18 @@ namespace OsrsPort
     /// first option, keys 1-5 pick an option. The server checks the range; the client only sends
     /// when the player is standing next to the target (OSRS rules: adjacent to the footprint).
     /// Also draws the HUD: crosshair, target label, health, chat log and hit numbers.
+    ///
+    /// Combat: left click attacks the NPC under the crosshair (the server keeps swinging at the
+    /// weapon's tick speed while the fight lasts); holding the button for a moment before releasing
+    /// arms the weapon's special attack first (a "power attack"); holding right mouse blocks with a
+    /// shield. Looking away from the enemy for a while breaks off the fight.
     /// </summary>
     public class OsrsInteraction : MonoBehaviour
     {
         public float reach = 7f;
         public int opRange = 1;
+        public float powerAttackHold = 0.35f;
+        public float disengageAfter = 2.0f;
 
         private Camera cam;
         private OsrsWorldLoader world;
@@ -29,7 +36,11 @@ namespace OsrsPort
         private OsrsWorldLoader.Placement targetLoc;
         private bool hasTarget;
         private bool inRange;
-        private readonly List<(float time, int damage, Vector3 at)> npcHits = new List<(float, int, Vector3)>();
+        private int engagedNpc = -1;
+        private float lastAimedAtEngaged;
+        private float attackPressStart = -1f;
+        private bool blocking;
+        private float swingStart = -10f;
 
         private void Start()
         {
@@ -44,6 +55,91 @@ namespace OsrsPort
             if (cam == null || world == null) return;
             FindTarget();
             ReadInput();
+            ReadCombatInput();
+            UpdateEngagement();
+            if (link != null && link.LastAnimTime > swingStart) swingStart = link.LastAnimTime;
+            AnimateCamera();
+        }
+
+        private int AttackOp()
+        {
+            if (!targetIsNpc || targetOps == null) return -1;
+            for (int i = 0; i < targetOps.Length; i++)
+                if (targetOps[i] == "Attack") return i + 1;
+            return -1;
+        }
+
+        private void ReadCombatInput()
+        {
+            if (Cursor.lockState != CursorLockMode.Locked || link == null) return;
+            bool attackDown, attackUp, blockHeld;
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            if (m == null) return;
+            attackDown = m.leftButton.wasPressedThisFrame;
+            attackUp = m.leftButton.wasReleasedThisFrame;
+            blockHeld = m.rightButton.isPressed;
+#else
+            attackDown = Input.GetMouseButtonDown(0);
+            attackUp = Input.GetMouseButtonUp(0);
+            blockHeld = Input.GetMouseButton(1);
+#endif
+            if (blockHeld != blocking)
+            {
+                blocking = blockHeld;
+                link.Send(blocking ? "BLOCK 1" : "BLOCK 0");
+            }
+            if (attackDown) attackPressStart = Time.time;
+            if (attackUp && attackPressStart >= 0f)
+            {
+                bool power = Time.time - attackPressStart >= powerAttackHold;
+                attackPressStart = -1f;
+                if (!blocking) Attack(power);
+            }
+        }
+
+        private void Attack(bool power)
+        {
+            int op = AttackOp();
+            if (op < 0 || targetNpc == null)
+            {
+                if (hasTarget && !targetIsNpc) return;
+                swingStart = Time.time;
+                return;
+            }
+            if (!link.LoggedIn) { link.messages.Add("Not connected to the server."); return; }
+            if (!inRange) { link.messages.Add($"You need to be next to the {targetName.ToLowerInvariant()} to attack it."); return; }
+            if (power) link.Send("SPEC");
+            link.Send($"OPNPC {targetNpc.index} {op}");
+            engagedNpc = targetNpc.index;
+            lastAimedAtEngaged = Time.time;
+            swingStart = Time.time;
+        }
+
+        /// <summary>Breaks off a fight when the crosshair has been off the enemy for a while.</summary>
+        private void UpdateEngagement()
+        {
+            if (engagedNpc < 0) return;
+            if (targetIsNpc && targetNpc != null && targetNpc.index == engagedNpc)
+                lastAimedAtEngaged = Time.time;
+            bool gone = true;
+            foreach (var npc in OsrsNpcRef.All) if (npc.index == engagedNpc) { gone = false; break; }
+            if (gone || Time.time - lastAimedAtEngaged > disengageAfter)
+            {
+                if (!gone) link?.Send("STOP");
+                engagedNpc = -1;
+            }
+        }
+
+        /// <summary>A short camera kick on each swing and a lowered stance while blocking.</summary>
+        private void AnimateCamera()
+        {
+            var fpc = GetComponent<FirstPersonController>();
+            if (fpc == null) return;
+            float swing = Mathf.Clamp01((Time.time - swingStart) / 0.3f);
+            float kick = Mathf.Sin(swing * Mathf.PI) * 2.5f;
+            var target = new Vector3(kick - (blocking ? 1.5f : 0f), 0f, blocking ? 2f : -kick * 0.4f);
+            fpc.cameraOffsetEuler = Vector3.Lerp(fpc.cameraOffsetEuler, target, blocking ? 0.2f : 1f);
         }
 
         private void FindTarget()
@@ -165,12 +261,14 @@ namespace OsrsPort
             if (hasTarget)
             {
                 int first = FirstOp();
+                int atk = AttackOp();
                 string line = first > 0 ? $"[E] {targetOps[first - 1]} {targetName}" : targetName;
+                if (atk > 0) line = $"[Click] Attack {targetName}" + (first > 0 && first != atk ? $"   [E] {targetOps[first - 1]}" : "");
                 if (!inRange && first > 0) line += "  (move closer)";
                 Shadowed(new Rect(cx - 300, cy + 14, 600, 24), line, labelStyle);
                 var extra = new List<string>();
                 for (int i = 0; i < targetOps.Length; i++)
-                    if (!string.IsNullOrEmpty(targetOps[i]) && i + 1 != first) extra.Add($"{i + 1}: {targetOps[i]}");
+                    if (!string.IsNullOrEmpty(targetOps[i]) && i + 1 != first && i + 1 != atk) extra.Add($"{i + 1}: {targetOps[i]}");
                 if (extra.Count > 0)
                     Shadowed(new Rect(cx - 300, cy + 38, 600, 20), string.Join("   ", extra), smallStyle, TextAnchor.UpperCenter);
                 if (targetIsNpc && targetNpc != null && targetNpc.maxHp > 0)
@@ -188,6 +286,19 @@ namespace OsrsPort
                     GUI.color = Color.white;
                     Shadowed(new Rect(12, Screen.height - 38, 200, 20), $"HP {link.Hp}/{link.MaxHp}", smallStyle, TextAnchor.MiddleCenter);
                 }
+                if (link.SpecEnergy >= 0)
+                {
+                    GUI.color = new Color(0f, 0f, 0f, 0.5f);
+                    GUI.Box(new Rect(10, Screen.height - 62, 204, 18), GUIContent.none);
+                    GUI.color = new Color(0.3f, 0.6f, 1f);
+                    GUI.Box(new Rect(12, Screen.height - 60, 200f * Mathf.Clamp01(link.SpecEnergy / 1000f), 14), GUIContent.none);
+                    GUI.color = Color.white;
+                    Shadowed(new Rect(12, Screen.height - 61, 200, 16), $"Special {link.SpecEnergy / 10}%", smallStyle, TextAnchor.MiddleCenter);
+                }
+                if (blocking)
+                    Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);
+                else if (attackPressStart >= 0f && Time.time - attackPressStart >= powerAttackHold)
+                    Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Power attack ready", labelStyle);
                 int shown = Mathf.Min(6, link.messages.Count);
                 for (int i = 0; i < shown; i++)
                 {

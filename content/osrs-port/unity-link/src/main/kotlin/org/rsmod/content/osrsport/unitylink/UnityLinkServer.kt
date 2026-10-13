@@ -108,6 +108,9 @@ class UnityLinkServer(private val port: Int) {
                 val op = parts.getOrNull(2)?.toIntOrNull()
                 if (idx == null || op == null) null else LinkCommand.OpNpc(connection, idx, op)
             }
+            "STOP" -> LinkCommand.Stop(connection)
+            "SPEC" -> LinkCommand.Special(connection)
+            "BLOCK" -> LinkCommand.Block(connection, parts.getOrNull(1) == "1")
             "BYE" -> LinkCommand.Bye(connection)
             else -> null
         }
@@ -128,6 +131,8 @@ class LinkConnection(val socket: Socket) {
     var lastMaxHp: Int = -1
     var lastNpcLine: String = ""
     val locZones: HashSet<Int> = HashSet()
+    var blocking: Boolean = false
+    var lastSpecEnergy: Int = -1
 
     private val writer =
         PrintWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)
@@ -172,6 +177,12 @@ sealed class LinkCommand {
     ) : LinkCommand()
 
     data class OpNpc(override val connection: LinkConnection, val index: Int, val op: Int) : LinkCommand()
+
+    data class Stop(override val connection: LinkConnection) : LinkCommand()
+
+    data class Special(override val connection: LinkConnection) : LinkCommand()
+
+    data class Block(override val connection: LinkConnection, val blocking: Boolean) : LinkCommand()
 
     data class Bye(override val connection: LinkConnection) : LinkCommand()
 
