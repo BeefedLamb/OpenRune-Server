@@ -7,7 +7,7 @@ import net.rsprot.protocol.game.outgoing.interfaces.IfCloseSub
 import net.rsprot.protocol.game.outgoing.interfaces.IfOpenSub
 import net.rsprot.protocol.game.outgoing.interfaces.IfSetNpcHead
 import net.rsprot.protocol.game.outgoing.interfaces.IfSetText
-import net.rsprot.protocol.game.outgoing.misc.client.RunClientScript
+import net.rsprot.protocol.game.outgoing.misc.player.RunClientScript
 import net.rsprot.protocol.game.outgoing.misc.player.MessageGame
 import org.rsmod.game.client.Client
 import org.rsmod.game.entity.Player
