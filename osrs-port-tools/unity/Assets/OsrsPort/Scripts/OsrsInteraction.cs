@@ -80,6 +80,7 @@ namespace OsrsPort
             ReadChatInput();
             if (chatOpen) { TextInputActive = true; return; }
             TextInputActive = false;
+            if (OsrsPanels.UiOpen) { hasTarget = false; return; }
             if (link != null && link.CurrentDialogue != null)
             {
                 ReadDialogueInput(link.CurrentDialogue);

@@ -51,6 +51,24 @@ namespace OsrsPort
 
         /// <summary>The chatbox dialogue currently open on the server, or null.</summary>
         public Dialogue CurrentDialogue { get; private set; }
+
+        public class Item
+        {
+            public int slot, id, count;
+            public string name;
+            public string[] ops;
+        }
+
+        public class Stat
+        {
+            public int id, level, baseLevel, xp;
+            public string name;
+        }
+
+        public readonly List<Item> inventory = new List<Item>();
+        public readonly List<Item> equipment = new List<Item>();
+        public readonly List<Stat> stats = new List<Stat>();
+        public int InventoryRevision { get; private set; }
         public int NpcRevision { get; private set; }
 
         /// <summary>Damage taken by the player this session, newest last: (time, damage).</summary>
@@ -247,10 +265,52 @@ namespace OsrsPort
                 case "DLG":
                     HandleDialogue(rest);
                     break;
+                case "INV":
+                    ParseItems(rest, inventory);
+                    break;
+                case "WORN":
+                    ParseItems(rest, equipment);
+                    break;
+                case "STATS":
+                    ParseStats(rest);
+                    break;
                 case "ERROR":
                     status = "Server: " + rest;
                     AddMessage("Server error: " + rest);
                     break;
+            }
+        }
+
+        private void ParseItems(string rest, List<Item> into)
+        {
+            into.Clear();
+            foreach (var e in rest.Split(';'))
+            {
+                if (e.Length == 0) continue;
+                var f = e.Split('|');
+                if (f.Length < 5) continue;
+                into.Add(new Item
+                {
+                    slot = int.Parse(f[0]), id = int.Parse(f[1]), count = int.Parse(f[2]), name = f[3],
+                    ops = f[4].Split('/'),
+                });
+            }
+            InventoryRevision++;
+        }
+
+        private void ParseStats(string rest)
+        {
+            stats.Clear();
+            foreach (var e in rest.Split(';'))
+            {
+                if (e.Length == 0) continue;
+                var f = e.Split('|');
+                if (f.Length < 5) continue;
+                stats.Add(new Stat
+                {
+                    id = int.Parse(f[0]), name = f[1], level = int.Parse(f[2]), baseLevel = int.Parse(f[3]),
+                    xp = int.Parse(f[4]),
+                });
             }
         }
 

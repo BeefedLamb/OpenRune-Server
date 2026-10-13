@@ -70,7 +70,7 @@ namespace OsrsPort
 
         private void Update()
         {
-            if (OsrsInteraction.TextInputActive) return;
+            if (OsrsInteraction.TextInputActive || OsrsPanels.UiOpen) return;
             ReadInput(out var move, out var look, out bool run, out bool jump, out bool up, out bool down,
                 out bool toggleNoclip, out bool escape, out bool click, out bool toggleView, out bool dodge);
 

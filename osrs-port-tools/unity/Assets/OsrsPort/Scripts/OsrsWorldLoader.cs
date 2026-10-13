@@ -586,6 +586,7 @@ namespace OsrsPort
             go.AddComponent<FirstPersonController>();
             go.AddComponent<OsrsServerLink>();
             go.AddComponent<OsrsInteraction>();
+            go.AddComponent<OsrsPanels>();
             var npcs = new GameObject("Npcs");
             npcs.transform.SetParent(transform, false);
             npcs.AddComponent<OsrsNpcManager>().material = material;
