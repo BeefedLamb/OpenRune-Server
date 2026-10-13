@@ -27,6 +27,8 @@ import org.rsmod.api.player.output.mes
 import org.rsmod.api.player.protect.ProtectedAccessLauncher
 import org.rsmod.api.player.protect.clearPendingAction
 import org.rsmod.api.player.stat.baseHitpointsLvl
+import org.rsmod.api.player.stat.stat
+import org.rsmod.api.player.stat.statBase
 import org.rsmod.api.player.stat.hitpoints
 import org.rsmod.api.player.lefthand
 import org.rsmod.api.player.righthand
@@ -556,8 +558,8 @@ constructor(
             }
             val name = RSCM.getReverseMapping(RSCMType.STAT, stat.id)
             stats.append(stat.id).append('|').append(stat.displayName.ifEmpty { name.substringAfter('.') })
-                .append('|').append(player.statMap.getCurrentLevel(name).toInt())
-                .append('|').append(player.statMap.getBaseLevel(name).toInt())
+                .append('|').append(player.stat(name))
+                .append('|').append(player.statBase(name))
                 .append('|').append(player.statMap.getXP(name)).append(';')
         }
         val statsLine = stats.toString()
