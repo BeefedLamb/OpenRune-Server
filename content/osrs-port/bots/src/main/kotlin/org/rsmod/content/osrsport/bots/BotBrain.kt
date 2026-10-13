@@ -98,15 +98,18 @@ constructor(
             }
             return
         }
-        if (player.isBusy2) {
-            if (tick - bot.lastProgressTick > STUCK_TICKS) {
-                player.clearInteraction()
-                bot.lastProgressTick = tick
-                bot.lastLoc?.let { bot.avoid[it] = tick + AVOID_TICKS }
-            }
-            return
+        val held = player.inv.count { it != null }
+        if (held > bot.progressCount) {
+            bot.lastProgressTick = tick
         }
-        if (tick < bot.cooldownUntil) {
+        bot.progressCount = held
+        if (bot.lastLoc != null && tick - bot.lastProgressTick > STUCK_TICKS) {
+            bot.avoid[bot.lastLoc!!] = tick + AVOID_TICKS
+            bot.lastLoc = null
+            player.clearInteraction()
+            bot.lastProgressTick = tick
+        }
+        if (player.isBusy2 || tick < bot.cooldownUntil) {
             return
         }
         bot.avoid.entries.removeIf { it.value < tick }
@@ -118,7 +121,9 @@ constructor(
             wander(bot, player)
             return
         }
-        bot.lastProgressTick = tick
+        if (bot.lastLoc != tree.first.coords) {
+            bot.lastProgressTick = tick
+        }
         bot.cooldownUntil = tick + ACTION_COOLDOWN
         bot.lastLoc = tree.first.coords
         locInteractions.interact(player, tree.first, tree.second)

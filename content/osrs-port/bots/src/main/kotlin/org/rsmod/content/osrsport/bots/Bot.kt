@@ -27,6 +27,7 @@ class Bot(val name: String, var role: BotRole, var home: CoordGrid) {
     var outfitted = false
     var lastLoc: CoordGrid? = null
     var cooldownUntil = 0
+    var progressCount = 0
     val avoid = HashMap<CoordGrid, Int>()
 
     val online: Boolean

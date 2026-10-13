@@ -79,11 +79,11 @@ constructor(
                     player.mes("No such bot online.")
                 } else {
                     player.mes(
-                        "${bot.name}: ${p.coords.x},${p.coords.z} role=${bot.role.label} " +
+                        "${bot.name}: \"${bot.client.lastMessage}\" ${p.coords.x},${p.coords.z} " +
                             "interaction=${p.interaction?.javaClass?.simpleName} delayed=${p.isDelayed} " +
                             "protected=${p.isAccessProtected} modals=${p.ui.modals.isNotEmpty()} " +
                             "route=${p.routeDestination.isNotEmpty()} inv=${p.inv.count { it != null }} " +
-                            "retreat=${bot.retreating} last=\"${bot.client.lastMessage}\""
+                            "retreat=${bot.retreating}"
                     )
                 }
             }
