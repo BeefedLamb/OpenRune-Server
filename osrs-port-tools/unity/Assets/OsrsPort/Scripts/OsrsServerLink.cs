@@ -297,8 +297,9 @@ namespace OsrsPort
         {
             if (world == null) return;
             var target = new Vector3(tile.x + 0.5f, 60f, tile.y + 0.5f);
-            if (Physics.Raycast(target, Vector3.down, out var hit, 120f, OsrsNpcManager.WorldMask))
-                target.y = hit.point.y + 0.1f;
+            var terrain = world.TerrainHeight(target.x, target.z);
+            if (terrain.HasValue)
+                target.y = terrain.Value + 0.1f;
             else
                 pendingGroundSnap = true;
             Teleport(target);
@@ -306,9 +307,10 @@ namespace OsrsPort
 
         private void SnapToGround()
         {
-            var probe = transform.position; probe.y = 60f;
-            if (Physics.Raycast(probe, Vector3.down, out var hit, 120f, OsrsNpcManager.WorldMask))
-                Teleport(new Vector3(probe.x, hit.point.y + 0.1f, probe.z));
+            var probe = transform.position;
+            var terrain = world.TerrainHeight(probe.x, probe.z);
+            if (terrain.HasValue)
+                Teleport(new Vector3(probe.x, terrain.Value + 0.1f, probe.z));
         }
 
         private void Teleport(Vector3 target)

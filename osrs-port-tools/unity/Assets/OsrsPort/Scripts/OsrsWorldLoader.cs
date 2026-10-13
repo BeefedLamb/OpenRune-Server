@@ -562,6 +562,14 @@ namespace OsrsPort
             return 0f;
         }
 
+        /// <summary>Height of the ground mesh at a point (ignores roofs and scenery), or null if that square isn't loaded.</summary>
+        public float? TerrainHeight(float x, float z)
+        {
+            int rx = Mathf.FloorToInt(x) >> 6, ry = Mathf.FloorToInt(z) >> 6;
+            if (!loaded.TryGetValue((rx, ry), out var sq) || sq.terrainCollider == null) return null;
+            return sq.terrainCollider.Raycast(new Ray(new Vector3(x, 100f, z), Vector3.down), out var hit, 200f) ? hit.point.y : 0f;
+        }
+
         private static readonly int[] ROT_X = { 1, 0, -1, 0 };
         private static readonly int[] ROT_Z = { 0, -1, 0, 1 };
         private static readonly int[] DIAG_X = { 1, -1, -1, 1 };
@@ -573,7 +581,7 @@ namespace OsrsPort
                 cam.gameObject.SetActive(false);
             var start = new Vector3(spawnTile.x, 60f, spawnTile.y);
             start.y = Physics.Raycast(start, Vector3.down, out var hit, 120f) ? hit.point.y + 0.1f : 2f;
-            var go = new GameObject("Player");
+            var go = new GameObject("Player") { layer = OsrsNpcManager.PlayerLayer };
             go.transform.position = start;
             go.AddComponent<FirstPersonController>();
             go.AddComponent<OsrsServerLink>();

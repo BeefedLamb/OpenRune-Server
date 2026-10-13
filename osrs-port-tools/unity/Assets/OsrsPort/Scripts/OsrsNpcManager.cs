@@ -8,7 +8,8 @@ namespace OsrsPort
     public class OsrsNpcManager : MonoBehaviour
     {
         public const int NpcLayer = 8;
-        public static int WorldMask => ~(1 << NpcLayer);
+        public const int PlayerLayer = 2;
+        public static int WorldMask => ~((1 << NpcLayer) | (1 << PlayerLayer));
         public static int NpcMask => 1 << NpcLayer;
 
         public Material material;
@@ -104,6 +105,8 @@ namespace OsrsPort
 
         private float GroundHeight(Vector3 p)
         {
+            var terrain = world.TerrainHeight(p.x, p.z);
+            if (terrain.HasValue) return terrain.Value;
             p.y = 60f;
             return Physics.Raycast(p, Vector3.down, out var hit, 120f, WorldMask) ? hit.point.y : 0f;
         }

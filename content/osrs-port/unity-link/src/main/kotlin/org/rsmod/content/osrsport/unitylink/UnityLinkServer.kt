@@ -109,6 +109,7 @@ class UnityLinkServer(private val port: Int) {
                 if (idx == null || op == null) null else LinkCommand.OpNpc(connection, idx, op)
             }
             "CHAT" -> LinkCommand.Chat(connection, line.substring(4).trim())
+            "DODGE" -> LinkCommand.Dodge(connection)
             "STOP" -> LinkCommand.Stop(connection)
             "SPEC" -> LinkCommand.Special(connection)
             "BLOCK" -> LinkCommand.Block(connection, parts.getOrNull(1) == "1")
@@ -133,6 +134,7 @@ class LinkConnection(val socket: Socket) {
     var lastNpcLine: String = ""
     val locZones: HashSet<Int> = HashSet()
     var blocking: Boolean = false
+    var dodgeUntilTick: Int = 0
     var lastSpecEnergy: Int = -1
 
     private val writer =
@@ -180,6 +182,8 @@ sealed class LinkCommand {
     data class OpNpc(override val connection: LinkConnection, val index: Int, val op: Int) : LinkCommand()
 
     data class Stop(override val connection: LinkConnection) : LinkCommand()
+
+    data class Dodge(override val connection: LinkConnection) : LinkCommand()
 
     data class Chat(override val connection: LinkConnection, val text: String) : LinkCommand()
 

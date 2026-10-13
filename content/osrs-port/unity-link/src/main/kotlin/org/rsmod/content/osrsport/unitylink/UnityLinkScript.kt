@@ -62,8 +62,8 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  *
  * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
  * `STOP` (drop the current interaction), `SPEC` (arm the weapon special for the next attack),
- * `BLOCK 1|0` (shield block held/released), `CHAT text` (`::` prefix runs a server command),
- * `BYE`.
+ * `BLOCK 1|0` (shield block held/released), `DODGE` (one tick of invulnerability), `CHAT text`
+ * (`::` prefix runs a server command), `BYE`.
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
  * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
  * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
@@ -93,6 +93,7 @@ constructor(
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
+    private var currentTick = 0
 
     override fun ScriptContext.startup() {
         onEvent<GameLifecycle.Startup> {
@@ -103,14 +104,19 @@ constructor(
             }
         }
         onEvent<GameLifecycle.Shutdown> { server.stop() }
-        onEvent<GameLifecycle.StartCycle> { drainInbox() }
+        onEvent<GameLifecycle.StartCycle> {
+            currentTick++
+            drainInbox()
+        }
         onEvent<GameLifecycle.LateCycle> { syncClients() }
         onEvent<PlayerHitEvents.Impact> {
             connectionOf(player)?.send("HIT me 0 ${hit.damage}")
         }
         onEvent<PlayerHitEvents.Modify> {
             val connection = connectionOf(player) ?: return@onEvent
-            if (connection.blocking && player.lefthand != null && hit.type != HitType.Magic) {
+            if (currentTick < connection.dodgeUntilTick) {
+                hit.damage = 0
+            } else if (connection.blocking && player.lefthand != null && hit.type != HitType.Magic) {
                 hit.damage = hit.damage * (100 - BLOCK_REDUCTION_PERCENT) / 100
             }
         }
@@ -160,6 +166,7 @@ constructor(
             is LinkCommand.Chat -> chat(connection, command.text)
             is LinkCommand.Special -> armSpecial(connection)
             is LinkCommand.Block -> connection.blocking = command.blocking
+            is LinkCommand.Dodge -> connection.dodgeUntilTick = currentTick + DODGE_TICKS
             is LinkCommand.Bye -> {
                 connection.player?.forceDisconnect = true
                 connection.close()
@@ -514,22 +521,21 @@ constructor(
     }
 
     private fun sendNpcs(connection: LinkConnection, player: Player) {
+        val me = player.coords
+        val nearby =
+            npcRepo
+                .findAll(ZoneKey.from(me), NPC_ZONE_RADIUS)
+                .filter { it.isVisible && it.coords.level == me.level }
+                .sortedBy { chebyshev(it.coords, me) }
+                .take(MAX_NPCS)
         val sb = StringBuilder("NPCS ")
-        var count = 0
-        for (npc in npcRepo.findAll(ZoneKey.from(player.coords), NPC_ZONE_RADIUS)) {
-            if (!npc.isVisible || npc.coords.level != player.coords.level) {
-                continue
-            }
+        for (npc in nearby) {
             val c = npc.coords
             sb.append(npc.slotId).append(',').append(npc.visType.id).append(',')
                 .append(c.x).append(',').append(c.z).append(',').append(c.level).append(',')
                 .append(npc.hitpoints).append(',').append(npc.visType.hitpoints).append(';')
             if (npc.pendingSequence != EntitySeq.NULL) {
                 connection.send("NANIM ${npc.slotId} ${npc.pendingSequence.id}")
-            }
-            count++
-            if (count >= MAX_NPCS) {
-                break
             }
         }
         val line = sb.toString()
@@ -560,7 +566,10 @@ constructor(
         /** Damage taken off melee and ranged hits while holding a shield block. */
         const val BLOCK_REDUCTION_PERCENT = 50
 
-        const val MAX_NPCS = 80
+        /** Hits landing within this many ticks of a dodge roll do no damage. */
+        const val DODGE_TICKS = 1
+
+        const val MAX_NPCS = 200
 
         private var Player.newAccount by boolVarBit("varbit.new_player_account")
         private var Player.specialType by enumVarp<SpecialAttackType>("varp.sa_attack")

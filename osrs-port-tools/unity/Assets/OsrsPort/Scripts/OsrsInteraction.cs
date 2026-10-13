@@ -240,7 +240,8 @@ namespace OsrsPort
                 return;
             }
             var ray = new Ray(cam.transform.position, cam.transform.forward);
-            if (!Physics.Raycast(ray, out var hit, reach))
+            float extra = Vector3.Distance(cam.transform.position, transform.position);
+            if (!Physics.Raycast(ray, out var hit, reach + extra, ~(1 << OsrsNpcManager.PlayerLayer)))
                 return;
             var me = link != null ? link.CurrentTile() : new Vector3Int(Mathf.FloorToInt(transform.position.x), Mathf.FloorToInt(transform.position.z), 0);
             var npc = hit.collider.GetComponentInParent<OsrsNpcRef>();
