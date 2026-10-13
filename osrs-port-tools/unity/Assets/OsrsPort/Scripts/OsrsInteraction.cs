@@ -509,7 +509,7 @@ namespace OsrsPort
                 for (int i = 0; i < shown; i++)
                 {
                     var msg = link.messages[link.messages.Count - shown + i];
-                    Shadowed(new Rect(10, Screen.height - 180 + i * 20, 700, 20), msg, smallStyle);
+                    Shadowed(new Rect(10, Screen.height - 180 + i * 20, Screen.width - 20, 20), msg, smallStyle);
                 }
                 foreach (var h in link.hitsTaken)
                 {
