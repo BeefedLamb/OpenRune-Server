@@ -147,6 +147,7 @@ class LinkConnection(val socket: Socket) {
     var blocking: Boolean = false
     var dodgeUntilTick: Int = 0
     var lastInvLine: String = ""
+    var lastPlayersLine: String = ""
     var lastWornLine: String = ""
     var lastStatsLine: String = ""
     var lastSpecEnergy: Int = -1

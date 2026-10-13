@@ -2,9 +2,7 @@ package org.rsmod.content.osrsport.unitylink
 
 import com.github.michaelbull.logging.InlineLogger
 import dev.openrune.ServerCacheManager
-import dev.or2.central.account.Rights
 import dev.openrune.rscm.RSCM
-import dev.openrune.rscm.RSCM.asRSCM
 import dev.openrune.rscm.RSCMType
 import dev.openrune.types.aconverted.interf.IfButtonOp
 import jakarta.inject.Inject
@@ -12,13 +10,8 @@ import kotlin.math.abs
 import kotlin.math.max
 import net.rsprot.protocol.game.outgoing.zone.payload.LocAddChangeV2
 import net.rsprot.protocol.game.outgoing.zone.payload.LocDel
-import org.rsmod.api.account.AccountManager
-import org.rsmod.api.account.loader.request.AccountLoadAuth
-import org.rsmod.api.account.loader.request.AccountLoadResponse
-import org.rsmod.api.account.loader.request.isNewAccount
 import org.rsmod.api.game.process.GameLifecycle
 import org.rsmod.api.player.events.PlayerHitEvents
-import org.rsmod.api.player.input.ResumePauseButtonInput
 import org.rsmod.api.player.interact.HeldInteractions
 import org.rsmod.api.player.interact.LocInteractions
 import org.rsmod.api.player.interact.NpcInteractions
@@ -32,14 +25,9 @@ import org.rsmod.api.player.stat.statBase
 import org.rsmod.api.player.stat.hitpoints
 import org.rsmod.api.player.lefthand
 import org.rsmod.api.player.righthand
-import org.rsmod.api.player.vars.boolVarBit
 import org.rsmod.api.player.vars.enumVarp
 import org.rsmod.api.player.vars.intVarp
-import org.rsmod.api.realm.Realm
-import org.rsmod.api.registry.account.AccountRegistry
 import org.rsmod.api.registry.loc.LocRegistry
-import org.rsmod.api.registry.player.PlayerRegistry
-import org.rsmod.api.registry.player.PlayerRegistryResult
 import org.rsmod.api.registry.zone.ZoneUpdateMap
 import org.rsmod.api.repo.npc.NpcRepository
 import org.rsmod.api.script.onCommand
@@ -50,8 +38,8 @@ import org.rsmod.api.specials.SpecialAttackType
 import org.rsmod.events.EventBus
 import org.rsmod.game.cheat.CheatCommandMap
 import org.rsmod.game.entity.NpcList
+import org.rsmod.game.entity.PlayerList
 import org.rsmod.game.entity.Player
-import org.rsmod.game.entity.player.SessionStateEvent
 import org.rsmod.game.interact.InteractionLoc
 import org.rsmod.game.interact.InteractionLocOp
 import org.rsmod.game.interact.InteractionNpcOp
@@ -64,7 +52,6 @@ import org.rsmod.game.interact.HeldOp
 import org.rsmod.game.inv.Inventory
 import org.rsmod.game.movement.MoveSpeed
 import org.rsmod.game.seq.EntitySeq
-import org.rsmod.game.ui.Component
 import org.rsmod.map.CoordGrid
 import org.rsmod.map.zone.ZoneKey
 import org.rsmod.plugin.scripts.PluginScript
@@ -82,7 +69,8 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * Dialogues arrive as `DLG ...` lines (see [LinkClient]); the backpack, equipment and skills as
  * `INV slot|id|count|name|op1/../op5;...`, `WORN ...` (same shape) and `STATS id|name|level|base|xp;...`.
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
- * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
+ * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`,
+ * `PLAYERS slot|name|x|z|level|hp|maxHp|anim;...` (other players, i.e. bots), `ANIM seq` (player
  * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
  * `LOC del x z level shape rot`, `ERROR text`.
  *
@@ -93,16 +81,14 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
 class UnityLinkScript
 @Inject
 constructor(
-    private val accountManager: AccountManager,
-    private val accountRegistry: AccountRegistry,
-    private val playerRegistry: PlayerRegistry,
+    private val headlessLogin: HeadlessLogin,
     private val eventBus: EventBus,
-    private val realm: Realm,
     private val collision: CollisionFlagMap,
     private val locRegistry: LocRegistry,
     private val locInteractions: LocInteractions,
     private val npcInteractions: NpcInteractions,
     private val npcList: NpcList,
+    private val playerList: PlayerList,
     private val npcRepo: NpcRepository,
     private val zoneUpdates: ZoneUpdateMap,
     private val specialsReg: SpecialAttackRegistry,
@@ -131,6 +117,11 @@ constructor(
         onEvent<GameLifecycle.LateCycle> { syncClients() }
         onEvent<PlayerHitEvents.Impact> {
             connectionOf(player)?.send("HIT me 0 ${hit.damage}")
+        }
+        onEvent<HeadlessChat> {
+            for (connection in connections) {
+                connection.send("MSG 2 ${player.displayName}: $text")
+            }
         }
         onEvent<PlayerHitEvents.Modify> {
             val connection = connectionOf(player) ?: return@onEvent
@@ -210,83 +201,36 @@ constructor(
         connection.loggingIn = true
         connections += connection
         val queued =
-            accountManager.loadOrCreate(AccountLoadAuth.UnknownDevice, name, { LINK_PASSWORD_HASH }) {
-                response ->
-                onAccountLoaded(connection, response)
-            }
+            headlessLogin.login(
+                name = name,
+                client = LinkClient(connection),
+                admin = true,
+                failed = { reason ->
+                    connection.loggingIn = false
+                    connection.send("ERROR $reason")
+                },
+                loggedIn = { player -> finishLogin(connection, player) },
+            )
         if (!queued) {
             connection.loggingIn = false
             connection.send("ERROR login service busy, try again")
         }
     }
 
-    /** Runs on the account loader thread, like the normal login hook. */
-    private fun onAccountLoaded(connection: LinkConnection, response: AccountLoadResponse) {
-        if (response !is AccountLoadResponse.Ok) {
-            connection.loggingIn = false
-            connection.send("ERROR could not load account: ${response::class.simpleName}")
-            return
-        }
-        val player = createPlayer(connection, response)
-        accountRegistry.queueLogin(player, response) { p, _ -> finishLogin(connection, p) }
-    }
-
-    private fun createPlayer(connection: LinkConnection, response: AccountLoadResponse.Ok): Player {
-        val player = Player(client = LinkClient(connection))
-        for (transform in response.transforms) {
-            transform.apply(player)
-        }
-        player.ui.setWindowStatus(width = 765, height = 503, resizable = false)
-        player.modLevel = Rights.ADMINISTRATOR
-        player.newAccount = response.isNewAccount()
-        player.worldType = response.worldType
-
-        val config = realm.config
-        if (player.newAccount || response.firstVisitToWorldType) {
-            player.coords = config.spawnCoord
-            player.xpRate = config.baseXpRate
-            if (response.firstVisitToWorldType) {
-                player.newAccount = true
-            }
-            if (config.autoAssignDisplayNames && player.displayName.isBlank()) {
-                player.displayName = player.username.replaceFirstChar { it.titlecase() }
-            }
-        }
-        return player
-    }
-
-    /** Runs on the game thread, from the account registry's login queue. */
+    /** Runs on the game thread once the player is registered in the world. */
     private fun finishLogin(connection: LinkConnection, player: Player) {
         connection.loggingIn = false
         if (connection.isClosed) {
+            player.forceDisconnect = true
             return
         }
-        if (playerRegistry.isOnline(player.userId)) {
-            connection.send("ERROR that account is already logged in")
-            return
-        }
-        val slot = playerRegistry.nextFreeSlot()
-        if (slot == null) {
-            connection.send("ERROR server is full")
-            return
-        }
-        eventBus.publish(SessionStateEvent.PrepareLogin(player))
-        player.slotId = slot
-        val result = playerRegistry.add(player)
-        if (result != PlayerRegistryResult.Add.Success) {
-            connection.send("ERROR could not register player: $result")
-            logger.warn { "Unity link failed to register player: $result ($player)" }
-            return
-        }
-        eventBus.publish(SessionStateEvent.Login(player))
-        eventBus.publish(SessionStateEvent.EngineLogin(player))
         connection.player = player
         connection.clientTile = player.coords
         connection.lastSentTile = player.coords
         val c = player.coords
         connection.send("WELCOME ${c.x} ${c.z} ${c.level}")
         connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl} ${player.specialEnergy}")
-        logger.info { "Unity link: ${player.username} logged in at $c (slot $slot)" }
+        logger.info { "Unity link: ${player.username} logged in at $c (slot ${player.slotId})" }
     }
 
     // ------------------------------------------------------------------ movement
@@ -406,6 +350,7 @@ constructor(
         for (other in connections) {
             other.send("MSG 2 ${player.displayName}: $text")
         }
+        eventBus.publish(LinkPlayerSaid(player, text))
     }
 
     private fun opItem(connection: LinkConnection, command: LinkCommand.OpItem) {
@@ -458,15 +403,9 @@ constructor(
             else -> null
         }
 
-    /** Plays the chatbox modal's pause button, like a click on "Click here to continue". */
     private fun resumeDialogue(connection: LinkConnection, option: Int) {
         val player = connection.player ?: return
-        val interfaceId = player.ui.getModalOrNull(CHAT_MODAL)?.packed ?: return
-        val name = RSCM.getReverseMapping(RSCMType.INTERFACE, interfaceId)
-        val pauseComponent = PAUSE_COMPONENTS[name] ?: return
-        val sub = if (name == "interface.chatmenu") option else -1
-        player.ui.queueClose(Component(CHAT_MODAL.asRSCM(RSCMType.COMPONENT)))
-        player.resumeActiveCoroutine(ResumePauseButtonInput(pauseComponent, sub))
+        HeadlessDialogue.resume(player, option)
     }
 
     private fun stop(connection: LinkConnection) {
@@ -535,8 +474,30 @@ constructor(
                 connection.send("ANIM ${player.pendingSequence.id}")
             }
             sendNpcs(connection, player)
+            sendPlayers(connection, player)
             sendLocs(connection, player)
             sendInventories(connection, player)
+        }
+    }
+
+    /** Other players (bots) near the link player: `PLAYERS slot|name|x|z|level|hp|maxHp|anim;...`. */
+    private fun sendPlayers(connection: LinkConnection, player: Player) {
+        val me = player.coords
+        val sb = StringBuilder("PLAYERS ")
+        for (other in playerList) {
+            if (other === player || other.coords.level != me.level || chebyshev(other.coords, me) > PLAYER_VIEW_RANGE) {
+                continue
+            }
+            val c = other.coords
+            val anim = if (other.pendingSequence != EntitySeq.NULL) other.pendingSequence.id else -1
+            sb.append(other.slotId).append('|').append(other.displayName.replace('|', ' ')).append('|')
+                .append(c.x).append('|').append(c.z).append('|').append(c.level).append('|')
+                .append(other.hitpoints).append('|').append(other.baseHitpointsLvl).append('|').append(anim).append(';')
+        }
+        val line = sb.toString()
+        if (line != connection.lastPlayersLine) {
+            connection.lastPlayersLine = line
+            connection.send(line)
         }
     }
 
@@ -680,9 +641,6 @@ constructor(
 
         const val LINK_PORT = 43610
 
-        /** Accounts made through the link are local-only; this marks them and is never checked. */
-        const val LINK_PASSWORD_HASH = "unity-link-local"
-
         /** Tiles a player may be from a target's footprint to interact with it. */
         const val OP_RANGE = 1
 
@@ -691,7 +649,7 @@ constructor(
 
         const val NPC_ZONE_RADIUS = 2
 
-        const val CHAT_MODAL = "component.chatbox:chatmodal"
+        const val PLAYER_VIEW_RANGE = 24
 
         const val EXAMINE_OP = 10
 
@@ -716,7 +674,6 @@ constructor(
 
         const val MAX_NPCS = 200
 
-        private var Player.newAccount by boolVarBit("varbit.new_player_account")
         private var Player.specialType by enumVarp<SpecialAttackType>("varp.sa_attack")
         private val Player.specialEnergy by intVarp("varp.sa_energy")
 
