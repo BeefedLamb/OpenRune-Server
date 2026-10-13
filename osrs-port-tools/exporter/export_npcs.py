@@ -4,16 +4,15 @@ Usage: python3 export_npcs.py <cache_dir> <out_dir>
 Writes <out_dir>/world/npcs.txt (one NPC per line, tab-separated:
   id, name, size, combatLevel, scaleXZ, scaleY, models(comma), recolors(a:b,...), op1|op2|op3|op4|op5)
 and <out_dir>/world/npc_models.bin.gz in the same format as models.bin.gz.
-Also rewrites locs.json as locs.txt (id, name, sizeX, sizeY, op1|..|op5).
+locs.txt is written by export_extra_variants.py.
 """
 import gzip
-import json
 import os
 import struct
 import sys
 
 from cache import Buf, Cache
-from defs import CONFIG_INDEX, LocDefs
+from defs import CONFIG_INDEX
 from models import ModelCache
 
 NPC_ARCHIVE = 9
@@ -125,7 +124,7 @@ def decode_npc(nid, data):
     return d
 
 
-def write_models(path, cache, ids):
+def write_models_to(path, cache, ids):
     mc = ModelCache(cache)
     with gzip.open(path, "wb", 6) as f:
         f.write(struct.pack("<I", len(ids)))
@@ -178,17 +177,8 @@ def main():
                 ",".join(f"{a}:{b}" for a, b in d.retexture),
                 "|".join(o.replace("|", "/") for o in d.ops),
             ]) + "\n")
-    write_models(os.path.join(out, "npc_models.bin.gz"), cache, models)
-    locs = json.load(open(os.path.join(out, "locs.json")))
-    locdefs = LocDefs(cache)
-    with open(os.path.join(out, "locs.txt"), "w", encoding="utf-8") as f:
-        for lid in sorted(int(k) for k in locs):
-            d = locdefs.get(lid)
-            if d is None:
-                continue
-            ops = "|".join((o or "").replace("|", "/") for o in d.ops)
-            f.write(f"{lid}\t{d.name}\t{d.size_x}\t{d.size_y}\t{ops}\n")
-    print(f"npcs {len(npcs)} (bad {bad}), npc models {len(models)}, locs {len(locs)}")
+    write_models_to(os.path.join(out, "npc_models.bin.gz"), cache, models)
+    print(f"npcs {len(npcs)} (bad {bad}), npc models {len(models)}")
 
 
 if __name__ == "__main__":

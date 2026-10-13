@@ -5,6 +5,8 @@ import dev.openrune.ServerCacheManager
 import jakarta.inject.Inject
 import kotlin.math.abs
 import kotlin.math.max
+import net.rsprot.protocol.game.outgoing.zone.payload.LocAddChangeV2
+import net.rsprot.protocol.game.outgoing.zone.payload.LocDel
 import org.rsmod.api.account.AccountManager
 import org.rsmod.api.account.loader.request.AccountLoadAuth
 import org.rsmod.api.account.loader.request.AccountLoadResponse
@@ -23,6 +25,7 @@ import org.rsmod.api.registry.account.AccountRegistry
 import org.rsmod.api.registry.loc.LocRegistry
 import org.rsmod.api.registry.player.PlayerRegistry
 import org.rsmod.api.registry.player.PlayerRegistryResult
+import org.rsmod.api.registry.zone.ZoneUpdateMap
 import org.rsmod.api.repo.npc.NpcRepository
 import org.rsmod.api.script.onCommand
 import org.rsmod.api.script.onEvent
@@ -35,6 +38,7 @@ import org.rsmod.game.interact.InteractionLocOp
 import org.rsmod.game.interact.InteractionNpcOp
 import org.rsmod.game.interact.InteractionOp
 import org.rsmod.game.loc.BoundLocInfo
+import org.rsmod.game.loc.LocInfo
 import org.rsmod.game.map.collision.isZoneValid
 import org.rsmod.game.movement.MoveSpeed
 import org.rsmod.map.CoordGrid
@@ -48,7 +52,8 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  *
  * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
  * `BYE`. Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`,
- * `ME hp maxHp`, `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ERROR text`.
+ * `ME hp maxHp`, `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`,
+ * `LOC add id x z level shape rot` / `LOC del x z level shape rot`, `ERROR text`.
  *
  * The Unity client owns the player's position: the server never walks the link player, it only
  * teleports it where Unity says it stands. Interactions therefore work by range checks, not by
@@ -68,6 +73,7 @@ constructor(
     private val npcInteractions: NpcInteractions,
     private val npcList: NpcList,
     private val npcRepo: NpcRepository,
+    private val zoneUpdates: ZoneUpdateMap,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
@@ -364,6 +370,7 @@ constructor(
                 connection.send("ME $hp $maxHp")
             }
             sendNpcs(connection, player)
+            sendLocs(connection, player)
         }
     }
 
@@ -382,6 +389,54 @@ constructor(
             connection.clientTile = c
         } else if (collision.isZoneValid(client)) {
             place(player, client, keepInteraction = true)
+        }
+    }
+
+    /**
+     * Zones entering view get every spawned loc change (opened doors, tree stumps, ...); zones
+     * already in view get this tick's changes from the shared zone update map.
+     */
+    private fun sendLocs(connection: LinkConnection, player: Player) {
+        val centre = ZoneKey.from(player.coords)
+        val visible = HashSet<Int>()
+        for (dx in -LOC_ZONE_RADIUS..LOC_ZONE_RADIUS) {
+            for (dz in -LOC_ZONE_RADIUS..LOC_ZONE_RADIUS) {
+                val zone = centre.translate(dx, dz)
+                visible += zone.packed
+                if (connection.locZones.add(zone.packed)) {
+                    for (loc in locRegistry.findAllSpawned(zone)) {
+                        connection.send(locLine(loc))
+                    }
+                    continue
+                }
+                val updates = zoneUpdates[zone] ?: continue
+                val base = zone.toCoords()
+                for (prot in updates) {
+                    when (prot) {
+                        is LocAddChangeV2 ->
+                            connection.send(
+                                "LOC add ${prot.id} ${base.x + prot.xInZone} " +
+                                    "${base.z + prot.zInZone} ${base.level} ${prot.shape} " +
+                                    "${prot.rotation}"
+                            )
+                        is LocDel ->
+                            connection.send(
+                                "LOC del ${base.x + prot.xInZone} ${base.z + prot.zInZone} " +
+                                    "${base.level} ${prot.shape} ${prot.rotation}"
+                            )
+                    }
+                }
+            }
+        }
+        connection.locZones.retainAll(visible)
+    }
+
+    private fun locLine(loc: LocInfo): String {
+        val c = loc.coords
+        return if (loc.id == LocRegistry.DELETED_LOC_ID) {
+            "LOC del ${c.x} ${c.z} ${c.level} ${loc.shapeId} ${loc.angleId}"
+        } else {
+            "LOC add ${loc.id} ${c.x} ${c.z} ${c.level} ${loc.shapeId} ${loc.angleId}"
         }
     }
 
@@ -423,6 +478,8 @@ constructor(
         const val PIN_RANGE = 3
 
         const val NPC_ZONE_RADIUS = 2
+
+        const val LOC_ZONE_RADIUS = 3
 
         const val MAX_NPCS = 80
 

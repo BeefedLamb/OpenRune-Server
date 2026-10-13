@@ -214,10 +214,30 @@ namespace OsrsPort
                 case "NPCS":
                     ParseNpcs(rest);
                     break;
+                case "LOC":
+                    HandleLoc(rest);
+                    break;
                 case "ERROR":
                     status = "Server: " + rest;
                     AddMessage("Server error: " + rest);
                     break;
+            }
+        }
+
+        private void HandleLoc(string rest)
+        {
+            if (world == null) return;
+            var p = rest.Split(' ');
+            try
+            {
+                if (p[0] == "add" && p.Length >= 7)
+                    world.LocAdd(int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3]), int.Parse(p[4]), int.Parse(p[5]), int.Parse(p[6]));
+                else if (p[0] == "del" && p.Length >= 6)
+                    world.LocDel(int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3]), int.Parse(p[4]), int.Parse(p[5]));
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("OsrsPort: bad LOC line '" + rest + "': " + e.Message);
             }
         }
 

@@ -45,6 +45,15 @@ namespace OsrsPort
             public string name;
             public int sizeX, sizeY;
             public string[] ops = new string[5];
+            public bool rotated;
+            public int solid = 2;
+            public int offX, offY, offZ;
+            public int resolvedId;
+
+            public bool HasOps
+            {
+                get { foreach (var op in ops) if (!string.IsNullOrEmpty(op)) return true; return false; }
+            }
         }
 
         public class NpcDef
@@ -70,6 +79,7 @@ namespace OsrsPort
         public Variant[] variants = Array.Empty<Variant>();
         public readonly Dictionary<int, ushort> textureColors = new Dictionary<int, ushort>();
         public readonly Dictionary<int, LocDef> locs = new Dictionary<int, LocDef>();
+        public readonly Dictionary<(int, int, bool), int> variantIndex = new Dictionary<(int, int, bool), int>();
         public readonly Dictionary<int, NpcDef> npcs = new Dictionary<int, NpcDef>();
         private readonly ConcurrentDictionary<int, VariantMesh> variantMeshes = new ConcurrentDictionary<int, VariantMesh>();
         private readonly ConcurrentDictionary<int, VariantMesh> npcMeshes = new ConcurrentDictionary<int, VariantMesh>();
@@ -87,8 +97,12 @@ namespace OsrsPort
             LoadIndex();
             LoadVariants();
             LoadModels(Path.Combine(root, "models.bin.gz"));
+            if (File.Exists(Path.Combine(root, "models_extra.bin.gz")))
+                LoadModels(Path.Combine(root, "models_extra.bin.gz"));
             if (File.Exists(Path.Combine(root, "npc_models.bin.gz")))
                 LoadModels(Path.Combine(root, "npc_models.bin.gz"));
+            for (int i = 0; i < variants.Length; i++)
+                variantIndex[(variants[i].locId, variants[i].modelType, variants[i].mirror)] = i;
             LoadLocs();
             LoadNpcs();
         }
@@ -104,6 +118,14 @@ namespace OsrsPort
                 var d = new LocDef { id = int.Parse(p[0]), name = p[1], sizeX = int.Parse(p[2]), sizeY = int.Parse(p[3]) };
                 var ops = p[4].Split('|');
                 for (int i = 0; i < 5 && i < ops.Length; i++) d.ops[i] = ops[i];
+                d.resolvedId = d.id;
+                if (p.Length >= 11)
+                {
+                    d.rotated = p[5] == "1";
+                    d.solid = int.Parse(p[6]);
+                    d.offX = int.Parse(p[7]); d.offY = int.Parse(p[8]); d.offZ = int.Parse(p[9]);
+                    d.resolvedId = int.Parse(p[10]);
+                }
                 locs[d.id] = d;
             }
         }

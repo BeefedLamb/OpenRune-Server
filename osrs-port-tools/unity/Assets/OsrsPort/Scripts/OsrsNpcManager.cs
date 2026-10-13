@@ -130,10 +130,14 @@ namespace OsrsPort
                 mr.shadowCastingMode = ShadowCastingMode.Off;
                 height = Mathf.Max(0.5f, mesh.bounds.max.y);
             }
-            var col = go.AddComponent<CapsuleCollider>();
-            col.radius = Mathf.Max(0.3f, reference.size * 0.35f);
-            col.height = height;
-            col.center = new Vector3(0f, height * 0.5f, 0f);
+            bool targetable = mesh != null && def != null && def.name != "null";
+            if (targetable)
+            {
+                var col = go.AddComponent<CapsuleCollider>();
+                col.radius = Mathf.Max(0.3f, reference.size * 0.35f);
+                col.height = height;
+                col.center = new Vector3(0f, height * 0.5f, 0f);
+            }
             reference.height = height;
             return new Visual { go = go, reference = reference, lastHp = -1 };
         }

@@ -127,6 +127,7 @@ class LinkConnection(val socket: Socket) {
     var lastHp: Int = -1
     var lastMaxHp: Int = -1
     var lastNpcLine: String = ""
+    val locZones: HashSet<Int> = HashSet()
 
     private val writer =
         PrintWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)

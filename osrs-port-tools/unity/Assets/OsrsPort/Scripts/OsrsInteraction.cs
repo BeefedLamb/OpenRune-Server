@@ -35,6 +35,7 @@ namespace OsrsPort
         {
             world = OsrsWorldLoader.Instance;
             link = GetComponent<OsrsServerLink>();
+            Physics.queriesHitBackfaces = true;
         }
 
         private void Update()
@@ -64,6 +65,21 @@ namespace OsrsPort
                 int nx = Mathf.FloorToInt(npc.transform.position.x - npc.size * 0.5f);
                 int nz = Mathf.FloorToInt(npc.transform.position.z - npc.size * 0.5f);
                 inRange = Distance(me.x, me.y, nx, nz, npc.size, npc.size) <= opRange;
+                return;
+            }
+            var locRef = hit.collider.GetComponentInParent<OsrsLocRef>();
+            if (locRef != null && locRef.def != null)
+            {
+                targetLoc = new OsrsWorldLoader.Placement
+                {
+                    locId = locRef.locId, x = locRef.x, z = locRef.z, level = locRef.level,
+                    sizeX = locRef.sizeX, sizeZ = locRef.sizeZ,
+                };
+                targetIsNpc = false;
+                targetName = locRef.def.name;
+                targetOps = locRef.def.ops;
+                hasTarget = true;
+                inRange = Distance(me.x, me.y, locRef.x, locRef.z, locRef.sizeX, locRef.sizeZ) <= opRange;
                 return;
             }
             var inside = hit.point - hit.normal * 0.08f;
