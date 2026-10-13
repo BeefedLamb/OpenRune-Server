@@ -39,6 +39,24 @@ namespace OsrsPort
             public short scaleX, scaleY, scaleZ;
         }
 
+        public class LocDef
+        {
+            public int id;
+            public string name;
+            public int sizeX, sizeY;
+            public string[] ops = new string[5];
+        }
+
+        public class NpcDef
+        {
+            public int id;
+            public string name;
+            public int size, combatLevel, scaleXZ, scaleY;
+            public int[] models;
+            public ushort[] recolorFrom, recolorTo, retextureFrom, retextureTo;
+            public string[] ops = new string[5];
+        }
+
         /// <summary>A variant resolved to flat-shaded triangles: 9 floats and 3 colours per face.</summary>
         public class VariantMesh
         {
@@ -51,7 +69,10 @@ namespace OsrsPort
         public readonly Dictionary<int, Model> models = new Dictionary<int, Model>();
         public Variant[] variants = Array.Empty<Variant>();
         public readonly Dictionary<int, ushort> textureColors = new Dictionary<int, ushort>();
+        public readonly Dictionary<int, LocDef> locs = new Dictionary<int, LocDef>();
+        public readonly Dictionary<int, NpcDef> npcs = new Dictionary<int, NpcDef>();
         private readonly ConcurrentDictionary<int, VariantMesh> variantMeshes = new ConcurrentDictionary<int, VariantMesh>();
+        private readonly ConcurrentDictionary<int, VariantMesh> npcMeshes = new ConcurrentDictionary<int, VariantMesh>();
         private readonly string root;
 
         public WorldData(string root)
@@ -65,7 +86,69 @@ namespace OsrsPort
         {
             LoadIndex();
             LoadVariants();
-            LoadModels();
+            LoadModels(Path.Combine(root, "models.bin.gz"));
+            if (File.Exists(Path.Combine(root, "npc_models.bin.gz")))
+                LoadModels(Path.Combine(root, "npc_models.bin.gz"));
+            LoadLocs();
+            LoadNpcs();
+        }
+
+        private void LoadLocs()
+        {
+            string path = Path.Combine(root, "locs.txt");
+            if (!File.Exists(path)) return;
+            foreach (var line in File.ReadLines(path))
+            {
+                var p = line.Split('\t');
+                if (p.Length < 5) continue;
+                var d = new LocDef { id = int.Parse(p[0]), name = p[1], sizeX = int.Parse(p[2]), sizeY = int.Parse(p[3]) };
+                var ops = p[4].Split('|');
+                for (int i = 0; i < 5 && i < ops.Length; i++) d.ops[i] = ops[i];
+                locs[d.id] = d;
+            }
+        }
+
+        private void LoadNpcs()
+        {
+            string path = Path.Combine(root, "npcs.txt");
+            if (!File.Exists(path)) return;
+            foreach (var line in File.ReadLines(path))
+            {
+                var p = line.Split('\t');
+                if (p.Length < 10) continue;
+                var d = new NpcDef
+                {
+                    id = int.Parse(p[0]), name = p[1], size = int.Parse(p[2]), combatLevel = int.Parse(p[3]),
+                    scaleXZ = int.Parse(p[4]), scaleY = int.Parse(p[5]),
+                    models = ParseInts(p[6]),
+                };
+                ParsePairs(p[7], out d.recolorFrom, out d.recolorTo);
+                ParsePairs(p[8], out d.retextureFrom, out d.retextureTo);
+                var ops = p[9].Split('|');
+                for (int i = 0; i < 5 && i < ops.Length; i++) d.ops[i] = ops[i];
+                npcs[d.id] = d;
+            }
+        }
+
+        private static int[] ParseInts(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return Array.Empty<int>();
+            var parts = s.Split(',');
+            var o = new int[parts.Length];
+            for (int i = 0; i < parts.Length; i++) o[i] = int.Parse(parts[i]);
+            return o;
+        }
+
+        private static void ParsePairs(string s, out ushort[] a, out ushort[] b)
+        {
+            if (string.IsNullOrEmpty(s)) { a = Array.Empty<ushort>(); b = Array.Empty<ushort>(); return; }
+            var parts = s.Split(',');
+            a = new ushort[parts.Length]; b = new ushort[parts.Length];
+            for (int i = 0; i < parts.Length; i++)
+            {
+                var kv = parts[i].Split(':');
+                a[i] = ushort.Parse(kv[0]); b[i] = ushort.Parse(kv[1]);
+            }
         }
 
         private void LoadIndex()
@@ -132,9 +215,9 @@ namespace OsrsPort
             }
         }
 
-        private void LoadModels()
+        private void LoadModels(string path)
         {
-            var d = ReadGzip(Path.Combine(root, "models.bin.gz"));
+            var d = ReadGzip(path);
             int p = 0;
             int count = BitConverter.ToInt32(d, p); p += 4;
             for (int i = 0; i < count; i++)
@@ -197,32 +280,51 @@ namespace OsrsPort
         private VariantMesh BuildVariantMesh(int id)
         {
             var v = variants[id];
+            return BuildMesh(v.models, v.mirror, v.scaleX / 128f, v.scaleY / 128f, v.scaleZ / 128f,
+                v.recolorFrom, v.recolorTo, v.retextureFrom, v.retextureTo);
+        }
+
+        public VariantMesh GetNpcMesh(int npcId)
+        {
+            return npcMeshes.GetOrAdd(npcId, BuildNpcMesh);
+        }
+
+        private VariantMesh BuildNpcMesh(int npcId)
+        {
+            if (!npcs.TryGetValue(npcId, out var n))
+                return new VariantMesh { positions = Array.Empty<float>(), colors = Array.Empty<Color32>() };
+            float s = n.scaleXZ / 128f;
+            return BuildMesh(n.models, false, s, n.scaleY / 128f, s, n.recolorFrom, n.recolorTo, n.retextureFrom, n.retextureTo);
+        }
+
+        private VariantMesh BuildMesh(int[] modelIds, bool mirror, float sx, float sy, float sz,
+            ushort[] recolorFrom, ushort[] recolorTo, ushort[] retextureFrom, ushort[] retextureTo)
+        {
             int faces = 0;
-            foreach (var mid in v.models)
+            foreach (var mid in modelIds)
                 if (models.TryGetValue(mid, out var m)) faces += m.colors.Length;
             var mesh = new VariantMesh { positions = new float[faces * 9], colors = new Color32[faces * 3], faceCount = faces };
-            float sx = v.scaleX / 128f, sy = v.scaleY / 128f, sz = v.scaleZ / 128f;
             int f = 0;
-            foreach (var mid in v.models)
+            foreach (var mid in modelIds)
             {
                 if (!models.TryGetValue(mid, out var m)) continue;
                 int nf = m.colors.Length;
                 for (int i = 0; i < nf; i++)
                 {
                     int a = m.faces[i * 3], b = m.faces[i * 3 + 1], c = m.faces[i * 3 + 2];
-                    if (v.mirror) { int t = b; b = c; c = t; }
+                    if (mirror) { int t = b; b = c; c = t; }
                     ushort hsl = m.colors[i];
-                    for (int k = 0; k < v.recolorFrom.Length; k++)
-                        if (hsl == v.recolorFrom[k]) { hsl = v.recolorTo[k]; break; }
+                    for (int k = 0; k < recolorFrom.Length; k++)
+                        if (hsl == recolorFrom[k]) { hsl = recolorTo[k]; break; }
                     int tex = m.textures[i];
                     if (tex != -1)
-                        for (int k = 0; k < v.retextureFrom.Length; k++)
-                            if (tex == v.retextureFrom[k]) { tex = v.retextureTo[k]; break; }
+                        for (int k = 0; k < retextureFrom.Length; k++)
+                            if (tex == retextureFrom[k]) { tex = retextureTo[k]; break; }
                     Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
                     int o = f * 9;
-                    WriteVertex(mesh.positions, o, m.positions, a, v.mirror, sx, sy, sz);
-                    WriteVertex(mesh.positions, o + 3, m.positions, b, v.mirror, sx, sy, sz);
-                    WriteVertex(mesh.positions, o + 6, m.positions, c, v.mirror, sx, sy, sz);
+                    WriteVertex(mesh.positions, o, m.positions, a, mirror, sx, sy, sz);
+                    WriteVertex(mesh.positions, o + 3, m.positions, b, mirror, sx, sy, sz);
+                    WriteVertex(mesh.positions, o + 6, m.positions, c, mirror, sx, sy, sz);
                     mesh.colors[f * 3] = col; mesh.colors[f * 3 + 1] = col; mesh.colors[f * 3 + 2] = col;
                     f++;
                 }

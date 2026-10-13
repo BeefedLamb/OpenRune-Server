@@ -70,7 +70,7 @@ class WorldExporter:
             self.variant_list.append((d, mtype, mirror, ids))
             self.models_used.update(ids)
             if d.id not in self.loc_info:
-                self.loc_info[d.id] = [d.name, [o for o in d.ops if o], d.size_x, d.size_y]
+                self.loc_info[d.id] = [d.name, [o or "" for o in d.ops], d.size_x, d.size_y]
         return vid
 
     # ------------------------------------------------------------ placements

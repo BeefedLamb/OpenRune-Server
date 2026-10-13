@@ -1,6 +1,7 @@
 package org.rsmod.content.osrsport.unitylink
 
 import com.github.michaelbull.logging.InlineLogger
+import dev.openrune.ServerCacheManager
 import jakarta.inject.Inject
 import kotlin.math.abs
 import kotlin.math.max
@@ -9,28 +10,49 @@ import org.rsmod.api.account.loader.request.AccountLoadAuth
 import org.rsmod.api.account.loader.request.AccountLoadResponse
 import org.rsmod.api.account.loader.request.isNewAccount
 import org.rsmod.api.game.process.GameLifecycle
+import org.rsmod.api.player.events.PlayerHitEvents
+import org.rsmod.api.player.interact.LocInteractions
+import org.rsmod.api.player.interact.NpcInteractions
 import org.rsmod.api.player.output.mes
+import org.rsmod.api.player.protect.clearPendingAction
+import org.rsmod.api.player.stat.baseHitpointsLvl
+import org.rsmod.api.player.stat.hitpoints
 import org.rsmod.api.player.vars.boolVarBit
 import org.rsmod.api.realm.Realm
 import org.rsmod.api.registry.account.AccountRegistry
+import org.rsmod.api.registry.loc.LocRegistry
 import org.rsmod.api.registry.player.PlayerRegistry
 import org.rsmod.api.registry.player.PlayerRegistryResult
+import org.rsmod.api.repo.npc.NpcRepository
 import org.rsmod.api.script.onCommand
 import org.rsmod.api.script.onEvent
 import org.rsmod.events.EventBus
+import org.rsmod.game.entity.NpcList
 import org.rsmod.game.entity.Player
 import org.rsmod.game.entity.player.SessionStateEvent
-import org.rsmod.game.entity.util.PathingEntityCommon
+import org.rsmod.game.interact.InteractionLoc
+import org.rsmod.game.interact.InteractionLocOp
+import org.rsmod.game.interact.InteractionNpcOp
+import org.rsmod.game.interact.InteractionOp
+import org.rsmod.game.loc.BoundLocInfo
 import org.rsmod.game.map.collision.isZoneValid
+import org.rsmod.game.movement.MoveSpeed
 import org.rsmod.map.CoordGrid
+import org.rsmod.map.zone.ZoneKey
 import org.rsmod.plugin.scripts.PluginScript
 import org.rsmod.plugin.scripts.ScriptContext
 import org.rsmod.routefinder.collision.CollisionFlagMap
 
 /**
  * Lets the Unity client play as a normal server-side player without the OSRS game protocol.
- * The player has no rsprot session (it keeps the default no-op client), so OSRS clients such as
- * RuneLite cannot see it; `::where` shows linked players instead.
+ *
+ * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
+ * `BYE`. Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`,
+ * `ME hp maxHp`, `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ERROR text`.
+ *
+ * The Unity client owns the player's position: the server never walks the link player, it only
+ * teleports it where Unity says it stands. Interactions therefore work by range checks, not by
+ * walking to the target.
  */
 class UnityLinkScript
 @Inject
@@ -41,6 +63,11 @@ constructor(
     private val eventBus: EventBus,
     private val realm: Realm,
     private val collision: CollisionFlagMap,
+    private val locRegistry: LocRegistry,
+    private val locInteractions: LocInteractions,
+    private val npcInteractions: NpcInteractions,
+    private val npcList: NpcList,
+    private val npcRepo: NpcRepository,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
@@ -55,7 +82,10 @@ constructor(
         }
         onEvent<GameLifecycle.Shutdown> { server.stop() }
         onEvent<GameLifecycle.StartCycle> { drainInbox() }
-        onEvent<GameLifecycle.LateCycle> { reportPositions() }
+        onEvent<GameLifecycle.LateCycle> { syncClients() }
+        onEvent<PlayerHitEvents.Impact> {
+            connectionOf(player)?.send("HIT me 0 ${hit.damage}")
+        }
 
         onCommand("where") {
             desc = "Lists players connected from the Unity client and their tiles."
@@ -77,6 +107,9 @@ constructor(
         server.stop()
     }
 
+    private fun connectionOf(player: Player): LinkConnection? =
+        connections.firstOrNull { it.player === player }
+
     private fun drainInbox() {
         while (true) {
             val command = server.inbox.poll() ?: break
@@ -93,6 +126,8 @@ constructor(
         when (command) {
             is LinkCommand.Hello -> beginLogin(connection, command.name)
             is LinkCommand.Position -> move(connection, command.x, command.z, command.level)
+            is LinkCommand.OpLoc -> opLoc(connection, command)
+            is LinkCommand.OpNpc -> opNpc(connection, command)
             is LinkCommand.Bye -> {
                 connection.player?.forceDisconnect = true
                 connection.close()
@@ -103,6 +138,8 @@ constructor(
             }
         }
     }
+
+    // ------------------------------------------------------------------ login
 
     private fun beginLogin(connection: LinkConnection, name: String) {
         if (connection.player != null || connection.loggingIn) {
@@ -128,12 +165,12 @@ constructor(
             connection.send("ERROR could not load account: ${response::class.simpleName}")
             return
         }
-        val player = createPlayer(response)
+        val player = createPlayer(connection, response)
         accountRegistry.queueLogin(player, response) { p, _ -> finishLogin(connection, p) }
     }
 
-    private fun createPlayer(response: AccountLoadResponse.Ok): Player {
-        val player = Player()
+    private fun createPlayer(connection: LinkConnection, response: AccountLoadResponse.Ok): Player {
+        val player = Player(client = LinkClient(connection))
         for (transform in response.transforms) {
             transform.apply(player)
         }
@@ -181,44 +218,193 @@ constructor(
         eventBus.publish(SessionStateEvent.Login(player))
         eventBus.publish(SessionStateEvent.EngineLogin(player))
         connection.player = player
+        connection.clientTile = player.coords
+        connection.lastSentTile = player.coords
         val c = player.coords
-        connection.lastSentX = c.x
-        connection.lastSentZ = c.z
-        connection.lastSentLevel = c.level
         connection.send("WELCOME ${c.x} ${c.z} ${c.level}")
+        connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl}")
         logger.info { "Unity link: ${player.username} logged in at $c (slot $slot)" }
     }
+
+    // ------------------------------------------------------------------ movement
 
     private fun move(connection: LinkConnection, x: Int, z: Int, level: Int) {
         val player = connection.player ?: return
         if (player.loggingOut || level !in 0..3) {
             return
         }
-        val current = player.coords
-        if (current.x == x && current.z == z && current.level == level) {
-            return
-        }
         val dest = CoordGrid(x, z, level)
-        if (!collision.isZoneValid(dest)) {
+        connection.clientTile = dest
+        if (player.coords == dest || !collision.isZoneValid(dest)) {
             return
         }
-        val distance = max(abs(current.x - x), abs(current.z - z))
-        if (distance > MAX_STEP_TILES && current.level == level) {
-            logger.debug { "Unity link: ${player.username} jumped $distance tiles to $dest" }
-        }
-        PathingEntityCommon.telejump(player, collision, dest)
+        val interaction = player.interaction
+        val keepInteraction =
+            interaction != null &&
+                (interaction !is InteractionLoc || chebyshev(dest, interaction.target.coords) <= 2)
+        place(player, dest, keepInteraction)
     }
 
-    private fun reportPositions() {
+    /** Moves the player instantly, like a telejump, but optionally keeps its interaction. */
+    private fun place(player: Player, dest: CoordGrid, keepInteraction: Boolean) {
+        val start = player.coords
+        player.coords = dest
+        player.lastProcessedCoord = CoordGrid.NULL
+        player.abortRoute()
+        if (!keepInteraction) {
+            player.clearInteraction()
+        }
+        if (collision.isZoneValid(start)) {
+            player.removeBlockWalkCollision(collision, start)
+        }
+        player.addBlockWalkCollision(collision, dest)
+        player.pendingTelejump = true
+        player.moveSpeed = MoveSpeed.Stationary
+    }
+
+    // ------------------------------------------------------------------ interactions
+
+    private fun opLoc(connection: LinkConnection, command: LinkCommand.OpLoc) {
+        val player = connection.player ?: return
+        if (player.isDelayed) {
+            return
+        }
+        val op = interactionOp(command.op) ?: return
+        val coords = CoordGrid(command.x, command.z, command.level)
+        val loc = locRegistry.findType(coords, command.locId)
+        if (loc == null) {
+            connection.send("MSG 0 Nothing interesting happens.")
+            return
+        }
+        val type = ServerCacheManager.getObject(command.locId) ?: return
+        val bound = BoundLocInfo(loc, type)
+        if (!locInteractions.hasOp(bound, type, player.vars, op)) {
+            return
+        }
+        if (distanceToLoc(player.coords, bound) > OP_RANGE) {
+            connection.send("MSG 0 You need to get closer.")
+            return
+        }
+        val interaction =
+            InteractionLocOp(
+                target = bound,
+                op = op,
+                hasOpTrigger = locInteractions.hasOpTrigger(player, bound, op, type),
+                hasApTrigger = locInteractions.hasApTrigger(player, bound, op, type),
+            )
+        player.clearPendingAction(eventBus)
+        player.resetFaceEntity()
+        player.faceLoc(loc, type.width, type.length)
+        player.interaction = interaction
+    }
+
+    private fun opNpc(connection: LinkConnection, command: LinkCommand.OpNpc) {
+        val player = connection.player ?: return
+        if (player.isDelayed) {
+            return
+        }
+        val op = interactionOp(command.op) ?: return
+        val npc = npcList[command.index] ?: return
+        if (npc.isDelayed || !npcInteractions.hasOp(npc, player.vars, op)) {
+            return
+        }
+        if (chebyshev(player.coords, npc.coords) > OP_RANGE + npc.size) {
+            connection.send("MSG 0 You need to get closer.")
+            return
+        }
+        val interaction =
+            InteractionNpcOp(
+                target = npc,
+                op = op,
+                hasOpTrigger = npcInteractions.hasOpTrigger(player, npc, op),
+                hasApTrigger = npcInteractions.hasApTrigger(player, npc, op),
+            )
+        player.clearPendingAction(eventBus)
+        player.faceNpc(npc)
+        player.interaction = interaction
+    }
+
+    private fun interactionOp(op: Int): InteractionOp? =
+        when (op) {
+            1 -> InteractionOp.Op1
+            2 -> InteractionOp.Op2
+            3 -> InteractionOp.Op3
+            4 -> InteractionOp.Op4
+            5 -> InteractionOp.Op5
+            else -> null
+        }
+
+    private fun distanceToLoc(from: CoordGrid, loc: BoundLocInfo): Int {
+        val w = loc.adjustedWidth
+        val l = loc.adjustedLength
+        val dx = max(loc.x - from.x, max(0, from.x - (loc.x + w - 1)))
+        val dz = max(loc.z - from.z, max(0, from.z - (loc.z + l - 1)))
+        return max(max(dx, 0), max(dz, 0))
+    }
+
+    // ------------------------------------------------------------------ per-tick sync
+
+    private fun syncClients() {
         for (connection in connections) {
             val player = connection.player ?: continue
+            if (player.loggingOut) {
+                continue
+            }
+            pin(connection, player)
             val c = player.coords
-            if (c.x != connection.lastSentX || c.z != connection.lastSentZ || c.level != connection.lastSentLevel) {
-                connection.lastSentX = c.x
-                connection.lastSentZ = c.z
-                connection.lastSentLevel = c.level
+            if (c != connection.lastSentTile) {
+                connection.lastSentTile = c
                 connection.send("TILE ${c.x} ${c.z} ${c.level}")
             }
+            val hp = player.hitpoints
+            val maxHp = player.baseHitpointsLvl
+            if (hp != connection.lastHp || maxHp != connection.lastMaxHp) {
+                connection.lastHp = hp
+                connection.lastMaxHp = maxHp
+                connection.send("ME $hp $maxHp")
+            }
+            sendNpcs(connection, player)
+        }
+    }
+
+    /**
+     * Unity owns the position. If the server walked the player (an interaction re-route), put it
+     * back; if the server teleported it (ladder, death, script), let Unity follow instead.
+     */
+    private fun pin(connection: LinkConnection, player: Player) {
+        val client = connection.clientTile ?: return
+        val c = player.coords
+        if (c == client) {
+            return
+        }
+        val teleported = c.level != client.level || chebyshev(c, client) > PIN_RANGE
+        if (teleported) {
+            connection.clientTile = c
+        } else if (collision.isZoneValid(client)) {
+            place(player, client, keepInteraction = true)
+        }
+    }
+
+    private fun sendNpcs(connection: LinkConnection, player: Player) {
+        val sb = StringBuilder("NPCS ")
+        var count = 0
+        for (npc in npcRepo.findAll(ZoneKey.from(player.coords), NPC_ZONE_RADIUS)) {
+            if (!npc.isVisible || npc.coords.level != player.coords.level) {
+                continue
+            }
+            val c = npc.coords
+            sb.append(npc.slotId).append(',').append(npc.visType.id).append(',')
+                .append(c.x).append(',').append(c.z).append(',').append(c.level).append(',')
+                .append(npc.hitpoints).append(',').append(npc.visType.hitpoints).append(';')
+            count++
+            if (count >= MAX_NPCS) {
+                break
+            }
+        }
+        val line = sb.toString()
+        if (line != connection.lastNpcLine) {
+            connection.lastNpcLine = line
+            connection.send(line)
         }
     }
 
@@ -230,8 +416,18 @@ constructor(
         /** Accounts made through the link are local-only; this marks them and is never checked. */
         const val LINK_PASSWORD_HASH = "unity-link-local"
 
-        const val MAX_STEP_TILES = 4
+        /** Tiles a player may be from a target's footprint to interact with it. */
+        const val OP_RANGE = 1
+
+        /** Server moves further than this are treated as teleports Unity should follow. */
+        const val PIN_RANGE = 3
+
+        const val NPC_ZONE_RADIUS = 2
+
+        const val MAX_NPCS = 80
 
         private var Player.newAccount by boolVarBit("varbit.new_player_account")
+
+        private fun chebyshev(a: CoordGrid, b: CoordGrid): Int = max(abs(a.x - b.x), abs(a.z - b.z))
     }
 }

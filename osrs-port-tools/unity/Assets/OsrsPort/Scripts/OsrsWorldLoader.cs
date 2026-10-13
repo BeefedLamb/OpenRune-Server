@@ -36,14 +36,27 @@ namespace OsrsPort
         private Task loadTask;
         private string status = "Loading world...";
 
+        public struct Placement
+        {
+            public int locId;
+            public int x, z, level;     // south-west tile of the footprint (world tiles)
+            public int sizeX, sizeZ;    // footprint after rotation
+            public int modelType;
+            public bool decor;
+        }
+
         private class SquareBuild
         {
             public int rx, ry;
             public float[] terrainPos; public Color32[] terrainCol;
             public float[] solidPos; public Color32[] solidCol;
             public float[] decorPos; public Color32[] decorCol;
-            public int placements;
+            public List<Placement> placements;
         }
+
+        private readonly Dictionary<(int, int), List<Placement>> placements = new Dictionary<(int, int), List<Placement>>();
+
+        public WorldData Data => world;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoStart()
@@ -156,6 +169,7 @@ namespace OsrsPort
                     Destroy(mf.sharedMesh);
                 Destroy(go);
                 loaded.Remove(key);
+                placements.Remove(key);
             }
         }
 
@@ -178,7 +192,7 @@ namespace OsrsPort
             for (int i = 0; i < nv; i++) { build.terrainCol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255); p += 3; }
 
             int np = BitConverter.ToInt32(d, p); p += 4;
-            build.placements = np;
+            build.placements = new List<Placement>(np);
             int start = p;
             int solidFaces = 0, decorFaces = 0;
             for (int i = 0; i < np; i++)
@@ -201,8 +215,22 @@ namespace OsrsPort
                 float pz = oz + BitConverter.ToInt16(d, p + 11) / 128f;
                 float py = BitConverter.ToInt16(d, p + 13) / 128f;
                 bool decor = d[p + 15] != 0;
+                int lx = d[p + 4], lz = d[p + 5], level = d[p + 6];
                 p += 16;
                 var vm = world.GetVariantMesh(vid);
+                var variant = world.variants[vid];
+                int fx = 1, fz = 1;
+                if (world.locs.TryGetValue(variant.locId, out var def) && (variant.modelType == 10 || variant.modelType == 11))
+                {
+                    int rot = (yaw / 512) & 3;
+                    fx = (rot & 1) == 1 ? def.sizeY : def.sizeX;
+                    fz = (rot & 1) == 1 ? def.sizeX : def.sizeY;
+                }
+                build.placements.Add(new Placement
+                {
+                    locId = variant.locId, x = rx * 64 + lx, z = ry * 64 + lz, level = level,
+                    sizeX = fx, sizeZ = fz, modelType = variant.modelType, decor = decor,
+                });
                 float ang = yaw * (2f * Mathf.PI / 2048f);
                 float s = Mathf.Sin(ang), c = Mathf.Cos(ang);
                 float[] dst = decor ? build.decorPos : build.solidPos;
@@ -230,6 +258,29 @@ namespace OsrsPort
             AddMesh(go, "objects", b.solidPos, b.solidCol, true);
             AddMesh(go, "decor", b.decorPos, b.decorCol, false);
             loaded[(b.rx, b.ry)] = go;
+            placements[(b.rx, b.ry)] = b.placements;
+        }
+
+        /// <summary>
+        /// The most specific interactable object covering a world tile, or null. Prefers objects
+        /// with right-click options, then solid over decorative, then the smallest footprint.
+        /// </summary>
+        public Placement? FindPlacement(int tx, int tz, int level)
+        {
+            if (!placements.TryGetValue((tx >> 6, tz >> 6), out var list)) return null;
+            Placement? best = null;
+            int bestScore = int.MinValue;
+            foreach (var pl in list)
+            {
+                if (pl.level != level) continue;
+                if (tx < pl.x || tx >= pl.x + pl.sizeX || tz < pl.z || tz >= pl.z + pl.sizeZ) continue;
+                if (!world.locs.TryGetValue(pl.locId, out var def) || def.name == "null") continue;
+                bool hasOps = false;
+                foreach (var op in def.ops) if (!string.IsNullOrEmpty(op)) { hasOps = true; break; }
+                int score = (hasOps ? 1000 : 0) + (pl.decor ? 0 : 100) - pl.sizeX * pl.sizeZ;
+                if (score > bestScore) { bestScore = score; best = pl; }
+            }
+            return best;
         }
 
         private void AddMesh(GameObject parent, string name, float[] pos, Color32[] col, bool collide)
@@ -272,12 +323,24 @@ namespace OsrsPort
             go.transform.position = start;
             go.AddComponent<FirstPersonController>();
             go.AddComponent<OsrsServerLink>();
+            go.AddComponent<OsrsInteraction>();
+            var npcs = new GameObject("Npcs");
+            npcs.transform.SetParent(transform, false);
+            npcs.AddComponent<OsrsNpcManager>().material = material;
             player = go.transform;
         }
 
         private void OnGUI()
         {
-            GUI.Label(new Rect(10, 70, 600, 40), status);
+            var link = OsrsServerLink.Instance;
+            string text = status;
+            if (link != null)
+            {
+                text = link.Status + "\n" + text;
+                if (link.HasServerTile)
+                    text += $"\nServer tile: {link.ServerTile.x}, {link.ServerTile.y}, level {link.ServerTile.z}";
+            }
+            GUI.Label(new Rect(10, 10, 600, 60), text);
         }
     }
 }

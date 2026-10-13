@@ -13,13 +13,13 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicBoolean
 import org.rsmod.game.entity.Player
+import org.rsmod.map.CoordGrid
 
 /**
  * Line-based TCP listener for the Unity client. Socket threads only parse lines into [inbox];
  * everything that touches game state happens on the game thread when the script drains it.
  *
- * Client -> server: `HELLO <name>`, `POS <x> <z> <level>`, `BYE`.
- * Server -> client: `WELCOME <x> <z> <level>`, `TILE <x> <z> <level>`, `ERROR <text>`.
+ * See [UnityLinkScript] for the message formats.
  */
 class UnityLinkServer(private val port: Int) {
     val inbox: ConcurrentLinkedQueue<LinkCommand> = ConcurrentLinkedQueue()
@@ -98,6 +98,16 @@ class UnityLinkServer(private val port: Int) {
                 val level = parts.getOrNull(3)?.toIntOrNull() ?: 0
                 if (x == null || z == null) null else LinkCommand.Position(connection, x, z, level)
             }
+            "OPLOC" -> {
+                val v = parts.drop(1).map { it.toIntOrNull() }
+                if (v.size < 5 || v.any { it == null }) null
+                else LinkCommand.OpLoc(connection, v[0]!!, v[1]!!, v[2]!!, v[3]!!, v[4]!!)
+            }
+            "OPNPC" -> {
+                val idx = parts.getOrNull(1)?.toIntOrNull()
+                val op = parts.getOrNull(2)?.toIntOrNull()
+                if (idx == null || op == null) null else LinkCommand.OpNpc(connection, idx, op)
+            }
             "BYE" -> LinkCommand.Bye(connection)
             else -> null
         }
@@ -111,9 +121,12 @@ class UnityLinkServer(private val port: Int) {
 class LinkConnection(val socket: Socket) {
     @Volatile var player: Player? = null
     @Volatile var loggingIn: Boolean = false
-    var lastSentX: Int = Int.MIN_VALUE
-    var lastSentZ: Int = Int.MIN_VALUE
-    var lastSentLevel: Int = Int.MIN_VALUE
+    /** Where Unity last said the player stands (game thread only). */
+    var clientTile: CoordGrid? = null
+    var lastSentTile: CoordGrid? = null
+    var lastHp: Int = -1
+    var lastMaxHp: Int = -1
+    var lastNpcLine: String = ""
 
     private val writer =
         PrintWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8), true)
@@ -147,6 +160,17 @@ sealed class LinkCommand {
 
     data class Position(override val connection: LinkConnection, val x: Int, val z: Int, val level: Int) :
         LinkCommand()
+
+    data class OpLoc(
+        override val connection: LinkConnection,
+        val locId: Int,
+        val x: Int,
+        val z: Int,
+        val level: Int,
+        val op: Int,
+    ) : LinkCommand()
+
+    data class OpNpc(override val connection: LinkConnection, val index: Int, val op: Int) : LinkCommand()
 
     data class Bye(override val connection: LinkConnection) : LinkCommand()
 
