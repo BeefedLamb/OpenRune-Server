@@ -110,6 +110,11 @@ class UnityLinkServer(private val port: Int) {
             }
             "CHAT" -> LinkCommand.Chat(connection, line.substring(4).trim())
             "DODGE" -> LinkCommand.Dodge(connection)
+            "DLGC" -> LinkCommand.DialogueContinue(connection)
+            "DLGS" -> {
+                val option = parts.getOrNull(1)?.toIntOrNull()
+                if (option == null) null else LinkCommand.DialogueSelect(connection, option)
+            }
             "STOP" -> LinkCommand.Stop(connection)
             "SPEC" -> LinkCommand.Special(connection)
             "BLOCK" -> LinkCommand.Block(connection, parts.getOrNull(1) == "1")
@@ -184,6 +189,10 @@ sealed class LinkCommand {
     data class Stop(override val connection: LinkConnection) : LinkCommand()
 
     data class Dodge(override val connection: LinkConnection) : LinkCommand()
+
+    data class DialogueContinue(override val connection: LinkConnection) : LinkCommand()
+
+    data class DialogueSelect(override val connection: LinkConnection, val option: Int) : LinkCommand()
 
     data class Chat(override val connection: LinkConnection, val text: String) : LinkCommand()
 

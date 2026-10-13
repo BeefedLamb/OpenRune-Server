@@ -41,6 +41,16 @@ namespace OsrsPort
         public bool HasServerTile => hasServerTile;
         public readonly List<string> messages = new List<string>();
         public readonly List<NpcState> npcs = new List<NpcState>();
+
+        public class Dialogue
+        {
+            public string kind, title, text, continueText;
+            public int npcId;
+            public string[] options;
+        }
+
+        /// <summary>The chatbox dialogue currently open on the server, or null.</summary>
+        public Dialogue CurrentDialogue { get; private set; }
         public int NpcRevision { get; private set; }
 
         /// <summary>Damage taken by the player this session, newest last: (time, damage).</summary>
@@ -234,11 +244,26 @@ namespace OsrsPort
                 case "LOC":
                     HandleLoc(rest);
                     break;
+                case "DLG":
+                    HandleDialogue(rest);
+                    break;
                 case "ERROR":
                     status = "Server: " + rest;
                     AddMessage("Server error: " + rest);
                     break;
             }
+        }
+
+        private void HandleDialogue(string rest)
+        {
+            if (rest == "close") { CurrentDialogue = null; return; }
+            var p = rest.Split('|');
+            if (p.Length < 5) return;
+            var d = new Dialogue { kind = p[0], title = p[1], text = p[2], continueText = p[3] };
+            int.TryParse(p[4], out d.npcId);
+            d.options = new string[p.Length - 5];
+            for (int i = 5; i < p.Length; i++) d.options[i - 5] = p[i];
+            CurrentDialogue = d;
         }
 
         private void HandleLoc(string rest)

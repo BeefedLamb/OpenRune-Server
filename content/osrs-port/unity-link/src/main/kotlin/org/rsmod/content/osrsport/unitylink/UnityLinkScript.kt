@@ -2,6 +2,9 @@ package org.rsmod.content.osrsport.unitylink
 
 import com.github.michaelbull.logging.InlineLogger
 import dev.openrune.ServerCacheManager
+import dev.openrune.rscm.RSCM
+import dev.openrune.rscm.RSCM.asRSCM
+import dev.openrune.rscm.RSCMType
 import jakarta.inject.Inject
 import kotlin.math.abs
 import kotlin.math.max
@@ -13,6 +16,7 @@ import org.rsmod.api.account.loader.request.AccountLoadResponse
 import org.rsmod.api.account.loader.request.isNewAccount
 import org.rsmod.api.game.process.GameLifecycle
 import org.rsmod.api.player.events.PlayerHitEvents
+import org.rsmod.api.player.input.ResumePauseButtonInput
 import org.rsmod.api.player.interact.LocInteractions
 import org.rsmod.api.player.interact.NpcInteractions
 import org.rsmod.api.player.output.mes
@@ -51,6 +55,7 @@ import org.rsmod.game.map.collision.isZoneValid
 import org.rsmod.game.hit.HitType
 import org.rsmod.game.movement.MoveSpeed
 import org.rsmod.game.seq.EntitySeq
+import org.rsmod.game.ui.Component
 import org.rsmod.map.CoordGrid
 import org.rsmod.map.zone.ZoneKey
 import org.rsmod.plugin.scripts.PluginScript
@@ -63,7 +68,8 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * Client -> server: `HELLO name`, `POS x z level`, `OPLOC locId x z level op`, `OPNPC index op`,
  * `STOP` (drop the current interaction), `SPEC` (arm the weapon special for the next attack),
  * `BLOCK 1|0` (shield block held/released), `DODGE` (one tick of invulnerability), `CHAT text`
- * (`::` prefix runs a server command), `BYE`.
+ * (`::` prefix runs a server command), `DLGC` (click-to-continue), `DLGS n` (pick dialogue option
+ * n), `BYE`. Dialogues themselves arrive as `DLG ...` lines, see [LinkClient].
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
  * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`, `ANIM seq` (player
  * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
@@ -167,6 +173,8 @@ constructor(
             is LinkCommand.Special -> armSpecial(connection)
             is LinkCommand.Block -> connection.blocking = command.blocking
             is LinkCommand.Dodge -> connection.dodgeUntilTick = currentTick + DODGE_TICKS
+            is LinkCommand.DialogueContinue -> resumeDialogue(connection, -1)
+            is LinkCommand.DialogueSelect -> resumeDialogue(connection, command.option)
             is LinkCommand.Bye -> {
                 connection.player?.forceDisconnect = true
                 connection.close()
@@ -384,6 +392,17 @@ constructor(
         }
     }
 
+    /** Plays the chatbox modal's pause button, like a click on "Click here to continue". */
+    private fun resumeDialogue(connection: LinkConnection, option: Int) {
+        val player = connection.player ?: return
+        val interfaceId = player.ui.getModalOrNull(CHAT_MODAL)?.packed ?: return
+        val name = RSCM.getReverseMapping(RSCMType.INTERFACE, interfaceId)
+        val pauseComponent = PAUSE_COMPONENTS[name] ?: return
+        val sub = if (name == "interface.chatmenu") option else -1
+        player.ui.queueClose(Component(CHAT_MODAL.asRSCM(RSCMType.COMPONENT)))
+        player.resumeActiveCoroutine(ResumePauseButtonInput(pauseComponent, sub))
+    }
+
     private fun stop(connection: LinkConnection) {
         val player = connection.player ?: return
         if (player.isDelayed) {
@@ -560,6 +579,19 @@ constructor(
         const val PIN_RANGE = 3
 
         const val NPC_ZONE_RADIUS = 2
+
+        const val CHAT_MODAL = "component.chatbox:chatmodal"
+
+        val PAUSE_COMPONENTS =
+            mapOf(
+                "interface.chat_left" to "component.chat_left:continue",
+                "interface.chat_right" to "component.chat_right:continue",
+                "interface.messagebox" to "component.messagebox:continue",
+                "interface.objectbox" to "component.objectbox:universe",
+                "interface.objectbox_double" to "component.objectbox_double:pausebutton",
+                "interface.levelup_display" to "component.levelup_display:continue",
+                "interface.chatmenu" to "component.chatmenu:options",
+            )
 
         const val LOC_ZONE_RADIUS = 3
 

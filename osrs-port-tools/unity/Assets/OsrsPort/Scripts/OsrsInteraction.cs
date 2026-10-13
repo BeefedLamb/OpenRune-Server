@@ -62,6 +62,12 @@ namespace OsrsPort
             ReadChatInput();
             if (chatOpen) { TextInputActive = true; return; }
             TextInputActive = false;
+            if (link != null && link.CurrentDialogue != null)
+            {
+                ReadDialogueInput(link.CurrentDialogue);
+                hasTarget = false;
+                return;
+            }
             ReadLockOnInput();
             FindTarget();
             ReadInput();
@@ -177,6 +183,61 @@ namespace OsrsPort
                 if (text.Length == 0) return;
                 if (link != null && link.LoggedIn) link.Send("CHAT " + text);
                 else link?.messages.Add("Not connected to the server.");
+            }
+        }
+
+        /// <summary>Space, E or a click continues a dialogue; number keys pick a menu option.</summary>
+        private void ReadDialogueInput(OsrsServerLink.Dialogue d)
+        {
+            if (Cursor.lockState != CursorLockMode.Locked) return;
+            bool cont; int pick = -1;
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current; var m = Mouse.current;
+            if (kb == null) return;
+            cont = kb.spaceKey.wasPressedThisFrame || kb.eKey.wasPressedThisFrame || (m != null && m.leftButton.wasPressedThisFrame);
+            if (kb.digit1Key.wasPressedThisFrame) pick = 1;
+            else if (kb.digit2Key.wasPressedThisFrame) pick = 2;
+            else if (kb.digit3Key.wasPressedThisFrame) pick = 3;
+            else if (kb.digit4Key.wasPressedThisFrame) pick = 4;
+            else if (kb.digit5Key.wasPressedThisFrame) pick = 5;
+            else if (kb.digit6Key.wasPressedThisFrame) pick = 6;
+            else if (kb.digit7Key.wasPressedThisFrame) pick = 7;
+            else if (kb.digit8Key.wasPressedThisFrame) pick = 8;
+#else
+            cont = Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.E) || Input.GetMouseButtonDown(0);
+            for (int i = 1; i <= 8; i++) if (Input.GetKeyDown(KeyCode.Alpha0 + i)) pick = i;
+#endif
+            if (d.kind == "menu")
+            {
+                if (pick >= 1 && pick <= d.options.Length) link.Send($"DLGS {pick}");
+            }
+            else if (cont && !string.IsNullOrEmpty(d.continueText))
+                link.Send("DLGC");
+        }
+
+        private void DrawDialogue(OsrsServerLink.Dialogue d)
+        {
+            float w = Mathf.Min(620f, Screen.width - 40f), h = 150f;
+            float x = (Screen.width - w) / 2f, y = Screen.height - h - 70f;
+            GUI.color = new Color(0f, 0f, 0f, 0.75f);
+            GUI.Box(new Rect(x, y, w, h), GUIContent.none);
+            GUI.color = Color.white;
+            string title = d.title;
+            if (string.IsNullOrEmpty(title) && d.kind == "npc" && world.Data.npcs.TryGetValue(d.npcId, out var npc)) title = npc.name;
+            if (d.kind == "player" && string.IsNullOrEmpty(title)) title = link.playerName;
+            if (!string.IsNullOrEmpty(title))
+                Shadowed(new Rect(x + 16, y + 10, w - 32, 22), title, labelStyle, TextAnchor.UpperLeft);
+            if (d.kind == "menu")
+            {
+                for (int i = 0; i < d.options.Length; i++)
+                    Shadowed(new Rect(x + 24, y + 38 + i * 20, w - 48, 20), $"{i + 1}.  {d.options[i]}", smallStyle, TextAnchor.UpperLeft);
+            }
+            else
+            {
+                var body = new GUIStyle(smallStyle) { wordWrap = true, fontSize = 14 };
+                Shadowed(new Rect(x + 16, y + 38, w - 32, h - 70), System.Text.RegularExpressions.Regex.Replace(d.text.Replace("<br>", "\n"), "<[^>]+>", ""), body, TextAnchor.UpperLeft);
+                if (!string.IsNullOrEmpty(d.continueText))
+                    Shadowed(new Rect(x, y + h - 26, w, 20), "[Space] " + d.continueText, smallStyle, TextAnchor.UpperCenter);
             }
         }
 
@@ -369,6 +430,8 @@ namespace OsrsPort
                     Shadowed(new Rect(cx - 300, cy + 58, 600, 20), $"HP {targetNpc.hp}/{targetNpc.maxHp}", smallStyle, TextAnchor.UpperCenter);
             }
 
+            if (link != null && link.CurrentDialogue != null)
+                DrawDialogue(link.CurrentDialogue);
             if (chatOpen)
             {
                 GUI.SetNextControlName("osrs_chat");
