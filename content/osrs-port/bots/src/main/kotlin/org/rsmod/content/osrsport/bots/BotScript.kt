@@ -70,6 +70,25 @@ constructor(
                 player.mes("$name the ${role.label} is on the way.")
             }
         }
+        onCommand("botinfo") {
+            desc = "Shows what a bot is doing: ::botinfo name"
+            invalidArgs = "Use as ::botinfo name"
+            cheat {
+                val bot = bots[args[0].lowercase()]
+                val p = bot?.player
+                if (bot == null || p == null) {
+                    player.mes("No such bot online.")
+                } else {
+                    player.mes(
+                        "${bot.name}: ${p.coords.x},${p.coords.z} role=${bot.role.label} " +
+                            "interaction=${p.interaction?.javaClass?.simpleName} delayed=${p.isDelayed} " +
+                            "protected=${p.isAccessProtected} modals=${p.ui.modals.isNotEmpty()} " +
+                            "route=${p.routeDestination.isNotEmpty()} inv=${p.inv.count { it != null }} " +
+                            "retreat=${bot.retreating}"
+                    )
+                }
+            }
+        }
         onCommand("botsoff") {
             desc = "Logs every bot out."
             cheat {
@@ -162,9 +181,10 @@ constructor(
         val bot = named ?: listeners.firstOrNull() ?: return
         val player = bot.player ?: return
         bot.lastSpokeTick = tick
-        val asked = chatter.ask(bot.name, "a ${bot.role.label} near Lumbridge", text, speaker.displayName)
+        val fallback = REPLY_LINES.random()
+        val asked = chatter.ask(bot.name, "a ${bot.role.label} near Lumbridge", text, speaker.displayName, fallback)
         if (!asked) {
-            say(bot, player, REPLY_LINES.random())
+            say(bot, player, fallback)
         }
     }
 

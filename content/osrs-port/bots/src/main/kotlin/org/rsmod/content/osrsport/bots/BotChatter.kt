@@ -30,7 +30,7 @@ class BotChatter(
 
     @Volatile private var offlineUntilMillis = 0L
 
-    fun ask(botName: String, persona: String, heard: String, speaker: String): Boolean {
+    fun ask(botName: String, persona: String, heard: String, speaker: String, fallback: String): Boolean {
         if (System.currentTimeMillis() < offlineUntilMillis || inFlight.get() >= MAX_IN_FLIGHT) {
             return false
         }
@@ -59,6 +59,7 @@ class BotChatter(
             if (error != null || response == null || response.statusCode() != 200) {
                 offlineUntilMillis = System.currentTimeMillis() + OFFLINE_BACKOFF_MILLIS
                 logger.debug { "Ollama unavailable: ${error?.message ?: response?.statusCode()}" }
+                replies.add(Reply(botName, fallback))
                 return@whenComplete
             }
             val text = runCatching { json.readTree(response.body()).path("response").asText() }.getOrNull()

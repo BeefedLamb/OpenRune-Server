@@ -24,6 +24,8 @@ class Bot(val name: String, var role: BotRole, var home: CoordGrid) {
     var lastSpokeTick = -1000
     var retreating = false
     var outfitted = false
+    var lastLoc: CoordGrid? = null
+    val avoid = HashMap<CoordGrid, Int>()
 
     val online: Boolean
         get() = player?.let { !it.loggingOut } ?: false

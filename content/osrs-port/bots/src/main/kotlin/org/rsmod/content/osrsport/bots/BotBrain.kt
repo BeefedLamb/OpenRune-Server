@@ -26,6 +26,7 @@ import org.rsmod.game.interact.InteractionNpcOp
 import org.rsmod.game.interact.InteractionOp
 import org.rsmod.game.loc.BoundLocInfo
 import org.rsmod.game.movement.RouteRequestCoord
+import org.rsmod.game.movement.RouteRequestLoc
 import org.rsmod.map.CoordGrid
 import org.rsmod.map.zone.ZoneKey
 
@@ -101,16 +102,32 @@ constructor(
             if (tick - bot.lastProgressTick > STUCK_TICKS) {
                 player.clearInteraction()
                 bot.lastProgressTick = tick
+                bot.lastLoc?.let { bot.avoid[it] = tick + AVOID_TICKS }
             }
             return
         }
-        val tree = nearestLoc(player.coords, "Chop down") { name -> name == "Tree" || name == "Oak tree" || name == "Dead tree" }
+        bot.avoid.entries.removeIf { it.value < tick }
+        val tree =
+            nearestLoc(player.coords, "Chop down") { coords, name ->
+                coords !in bot.avoid && (name == "Tree" || name == "Oak tree" || name == "Dead tree")
+            }
         if (tree == null) {
             wander(bot, player)
             return
         }
         bot.lastProgressTick = tick
+        bot.lastLoc = tree.first.coords
         locInteractions.interact(player, tree.first, tree.second)
+        val loc = tree.first
+        player.routeRequest =
+            RouteRequestLoc(
+                destination = loc.coords,
+                width = loc.width,
+                length = loc.length,
+                shape = loc.shapeId,
+                angle = loc.angleId,
+                forceApproachFlags = loc.forceApproachFlags,
+            )
     }
 
     private fun fight(bot: Bot, player: Player, tick: Int) {
@@ -187,7 +204,7 @@ constructor(
     private fun nearestLoc(
         from: CoordGrid,
         opName: String,
-        acceptName: (String) -> Boolean,
+        accept: (CoordGrid, String) -> Boolean,
     ): Pair<BoundLocInfo, InteractionOp>? {
         var best: Pair<BoundLocInfo, InteractionOp>? = null
         var bestDistance = Int.MAX_VALUE
@@ -199,7 +216,7 @@ constructor(
                         continue
                     }
                     val type = ServerCacheManager.getObject(loc.id) ?: continue
-                    if (!acceptName(type.name)) {
+                    if (!accept(loc.coords, type.name)) {
                         continue
                     }
                     val op = opNamed(opName) { slot -> type.actions.getOpOrNull(slot) } ?: continue
@@ -233,6 +250,7 @@ constructor(
         const val WANDER_RADIUS = 8
         const val SEARCH_ZONE_RADIUS = 2
         const val STUCK_TICKS = 40
+        const val AVOID_TICKS = 500
         const val RETREAT_HP_PERCENT = 40
         const val RECOVERED_HP_PERCENT = 90
         const val FOLLOW_DISTANCE = 3
