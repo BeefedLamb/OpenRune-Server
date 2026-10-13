@@ -168,7 +168,7 @@ namespace OsrsPort
                 dist = Mathf.Max(0.3f, hit.distance - 0.1f);
             cameraBoom.localPosition = new Vector3(0.35f, 0.25f, -dist);
             float roll = Dodging ? Mathf.Sin(Mathf.Clamp01((Time.time - dodgeStart) / dodgeDuration) * Mathf.PI) * 20f : 0f;
-            if (avatar != null) avatar.transform.localRotation = Quaternion.Euler(roll, 0f, 0f);
+            if (avatar != null) avatar.transform.localRotation = Quaternion.Euler(-roll, 180f, 0f);
         }
 
         private GameObject BuildAvatar()

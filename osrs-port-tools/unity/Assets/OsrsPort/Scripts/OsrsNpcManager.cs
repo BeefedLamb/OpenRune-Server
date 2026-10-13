@@ -51,7 +51,7 @@ namespace OsrsPort
                 {
                     var dir = v.to - v.from; dir.y = 0f;
                     if (dir.sqrMagnitude > 0.001f)
-                        v.go.transform.rotation = Quaternion.LookRotation(dir);
+                        v.go.transform.rotation = Quaternion.LookRotation(-dir);
                 }
                 v.go.transform.position = pos;
                 float bob = Mathf.Clamp01((t - v.reference.lastAnimTime) / 0.4f);
