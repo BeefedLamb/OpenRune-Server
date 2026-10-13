@@ -106,6 +106,9 @@ constructor(
             }
             return
         }
+        if (tick < bot.cooldownUntil) {
+            return
+        }
         bot.avoid.entries.removeIf { it.value < tick }
         val tree =
             nearestLoc(player.coords, "Chop down") { coords, name ->
@@ -116,6 +119,7 @@ constructor(
             return
         }
         bot.lastProgressTick = tick
+        bot.cooldownUntil = tick + ACTION_COOLDOWN
         bot.lastLoc = tree.first.coords
         locInteractions.interact(player, tree.first, tree.second)
         val loc = tree.first
@@ -251,6 +255,9 @@ constructor(
         const val SEARCH_ZONE_RADIUS = 2
         const val STUCK_TICKS = 40
         const val AVOID_TICKS = 500
+
+        /** Ticks to let a skilling script loop on its own before the bot re-issues the op. */
+        const val ACTION_COOLDOWN = 8
         const val RETREAT_HP_PERCENT = 40
         const val RECOVERED_HP_PERCENT = 90
         const val FOLLOW_DISTANCE = 3

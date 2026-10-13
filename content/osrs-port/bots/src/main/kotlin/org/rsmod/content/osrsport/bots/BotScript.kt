@@ -12,7 +12,6 @@ import org.rsmod.content.osrsport.unitylink.HeadlessChat
 import org.rsmod.content.osrsport.unitylink.HeadlessLogin
 import org.rsmod.content.osrsport.unitylink.LinkPlayerSaid
 import org.rsmod.events.EventBus
-import org.rsmod.game.client.NoopClient
 import org.rsmod.game.entity.Player
 import org.rsmod.game.entity.PlayerList
 import org.rsmod.game.entity.util.PathingEntityCommon
@@ -84,7 +83,7 @@ constructor(
                             "interaction=${p.interaction?.javaClass?.simpleName} delayed=${p.isDelayed} " +
                             "protected=${p.isAccessProtected} modals=${p.ui.modals.isNotEmpty()} " +
                             "route=${p.routeDestination.isNotEmpty()} inv=${p.inv.count { it != null }} " +
-                            "retreat=${bot.retreating}"
+                            "retreat=${bot.retreating} last=\"${bot.client.lastMessage}\""
                     )
                 }
             }
@@ -153,7 +152,7 @@ constructor(
         val queued =
             headlessLogin.login(
                 name = name,
-                client = NoopClient,
+                client = bot.client,
                 admin = false,
                 failed = { reason ->
                     bot.loggingIn = false

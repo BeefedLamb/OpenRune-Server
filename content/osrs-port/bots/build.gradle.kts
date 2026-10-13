@@ -9,4 +9,5 @@ dependencies {
     implementation(projects.api.npc)
     implementation(projects.content.osrsPort.unityLink)
     implementation(libs.jackson.databind)
+    implementation(libs.rsprot.api)
 }

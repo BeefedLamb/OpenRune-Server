@@ -17,6 +17,7 @@ enum class BotRole(val label: String) {
 
 class Bot(val name: String, var role: BotRole, var home: CoordGrid) {
     var player: Player? = null
+    val client = BotClient()
     var loggingIn = false
     var nextThinkTick = 0
     var target: Npc? = null
@@ -25,6 +26,7 @@ class Bot(val name: String, var role: BotRole, var home: CoordGrid) {
     var retreating = false
     var outfitted = false
     var lastLoc: CoordGrid? = null
+    var cooldownUntil = 0
     val avoid = HashMap<CoordGrid, Int>()
 
     val online: Boolean
