@@ -55,6 +55,24 @@ namespace OsrsPort
             Physics.queriesHitBackfaces = true;
         }
 
+#if ENABLE_INPUT_SYSTEM
+        private void OnEnable()
+        {
+            if (Keyboard.current != null) Keyboard.current.onTextInput += OnTextInput;
+        }
+
+        private void OnDisable()
+        {
+            if (Keyboard.current != null) Keyboard.current.onTextInput -= OnTextInput;
+        }
+
+        private void OnTextInput(char c)
+        {
+            if (!chatOpen || char.IsControl(c)) return;
+            if (chatText.Length < 120) chatText += c;
+        }
+#endif
+
         private void Update()
         {
             if (cam == null) cam = GetComponentInChildren<Camera>();
@@ -176,6 +194,16 @@ namespace OsrsPort
                 return;
             }
             if (escape) { chatOpen = false; return; }
+#if ENABLE_INPUT_SYSTEM
+            if (kb.backspaceKey.wasPressedThisFrame && chatText.Length > 0) chatText = chatText.Substring(0, chatText.Length - 1);
+            if (kb.vKey.wasPressedThisFrame && kb.ctrlKey.isPressed) chatText += GUIUtility.systemCopyBuffer ?? "";
+#else
+            foreach (char c in Input.inputString)
+            {
+                if (c == '\b') { if (chatText.Length > 0) chatText = chatText.Substring(0, chatText.Length - 1); }
+                else if (!char.IsControl(c) && chatText.Length < 120) chatText += c;
+            }
+#endif
             if (enter)
             {
                 var text = chatText.Trim();
@@ -434,12 +462,12 @@ namespace OsrsPort
                 DrawDialogue(link.CurrentDialogue);
             if (chatOpen)
             {
-                GUI.SetNextControlName("osrs_chat");
                 GUI.color = new Color(0f, 0f, 0f, 0.6f);
                 GUI.Box(new Rect(8, Screen.height - 212, 704, 26), GUIContent.none);
                 GUI.color = Color.white;
-                chatText = GUI.TextField(new Rect(12, Screen.height - 209, 696, 20), chatText, 120);
-                if (focusChat) { GUI.FocusControl("osrs_chat"); focusChat = false; }
+                bool caret = Mathf.FloorToInt(Time.time * 2f) % 2 == 0;
+                Shadowed(new Rect(12, Screen.height - 209, 696, 20), "> " + chatText + (caret ? "_" : ""), smallStyle, TextAnchor.MiddleLeft);
+                focusChat = false;
             }
             if (link != null)
             {
