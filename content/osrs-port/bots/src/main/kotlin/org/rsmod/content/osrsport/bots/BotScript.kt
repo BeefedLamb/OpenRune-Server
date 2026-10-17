@@ -10,6 +10,7 @@ import org.rsmod.api.script.onCommand
 import org.rsmod.api.script.onEvent
 import org.rsmod.content.osrsport.unitylink.HeadlessChat
 import org.rsmod.content.osrsport.unitylink.HeadlessLogin
+import org.rsmod.content.osrsport.unitylink.LinkAppearance
 import org.rsmod.content.osrsport.unitylink.LinkPlayerSaid
 import org.rsmod.events.EventBus
 import org.rsmod.game.entity.Player
@@ -161,6 +162,8 @@ constructor(
                 loggedIn = { player ->
                     bot.loggingIn = false
                     bot.player = player
+                    BotLook.ensure(player, name)
+                    logger.info { "Bot $name appearance ${LinkAppearance.line(player.slotId.toString(), player)}" }
                     if (BotBrain.chebyshev(player.coords, home) > HOME_LEASH || player.coords.level != home.level) {
                         PathingEntityCommon.telejump(player, collision, home)
                     }

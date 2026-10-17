@@ -88,3 +88,25 @@ What works: a sequence that has a frame sound plays that synth when the frame is
 Still unused: `retain` is exported and not applied. Skeletal sequences are still skipped by the animator, so their exported sounds do not play. A location of 0 uses an 8-tile range.
 
 Where this stopped: task 4 is done. Tasks 5–7 were not started.
+
+## 5. Distinct bot looks
+
+Every bot was logging in with the engine's default body, so they all sent the same `PLOOK`. The Unity client already builds another player's body from that packet (`OsrsNpcManager` / `OsrsPlayerModels`). No Unity script changed.
+
+Files changed:
+
+- `content/osrs-port/bots/src/main/kotlin/org/rsmod/content/osrsport/bots/BotLook.kt` — on login, restore the bot's saved look if there is one. Otherwise roll a body from the login name (body type, a legal identkit from each character-design style table, and colours) and save it with `CharacterDesign`. The name is the stable id, so a restart that has not saved yet still rolls the same body.
+- `content/osrs-port/bots/src/main/kotlin/org/rsmod/content/osrsport/bots/BotScript.kt` — applies that look before the bot is placed, and logs the `PLOOK` line.
+
+Tested against the restarted server on 127.0.0.1:43610, logged in as Lamb. `::bot mira wanderer` and `::bot nia wanderer` stood on the same floor. Unity received both `PLOOK`s and built both bodies:
+
+- Mira: body type 1, colours 0 14 9 2 12, torso kit 528, 1791 vertices. `PLOOK 9 1 0 14 9 2 12 -1 -1 -1 -1 528 -1 319 391 433 323 335 554`
+- Nia: body type 0, colours 22 15 26 4 7, torso kit 363, 2313 vertices. `PLOOK 10 0 22 15 26 4 7 -1 -1 -1 -1 363 -1 343 360 385 289 299 368`
+
+The default roster logged different lines too (Aldric and Brina are both body type 1 with different colours and kits; Corwin is body type 0).
+
+What works: two bots next to each other get different bodies through the existing `PLOOK` path. The same name keeps that body.
+
+Still the same on an unarmed wanderer: the four empty equipment slots stay -1, because there is no helm or weapon to put there. A woodcutter, fighter, or companion still equips their tool on top of this body.
+
+Where this stopped: task 5 is done. Tasks 6–7 were not started.
