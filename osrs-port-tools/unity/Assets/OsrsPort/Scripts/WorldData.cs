@@ -91,6 +91,9 @@ namespace OsrsPort
             public float[] positions;
             public Color32[] colors;
             public int faceCount;
+            /// <summary>Per corner: averaged OSRS vertex normal (length ~256) and the unlit colour, for re-lighting at a yaw.</summary>
+            public float[] normals;
+            public ushort[] hsls;
         }
 
         public readonly Dictionary<(int, int), SquareEntry> squares = new Dictionary<(int, int), SquareEntry>();
@@ -108,6 +111,7 @@ namespace OsrsPort
         public OsrsAnimData anim;
         private readonly ConcurrentDictionary<int, VariantMesh> variantMeshes = new ConcurrentDictionary<int, VariantMesh>();
         private readonly ConcurrentDictionary<int, VariantMesh> npcMeshes = new ConcurrentDictionary<int, VariantMesh>();
+        private readonly ConcurrentDictionary<int, float[]> vertexNormals = new ConcurrentDictionary<int, float[]>();
         private readonly string root;
 
         public WorldData(string root)
@@ -364,7 +368,7 @@ namespace OsrsPort
         {
             var v = variants[id];
             return BuildMesh(v.models, v.mirror, v.scaleX / 128f, v.scaleY / 128f, v.scaleZ / 128f,
-                v.recolorFrom, v.recolorTo, v.retextureFrom, v.retextureTo);
+                v.recolorFrom, v.recolorTo, v.retextureFrom, v.retextureTo, false);
         }
 
         public VariantMesh GetNpcMesh(int npcId)
@@ -377,20 +381,22 @@ namespace OsrsPort
             if (!npcs.TryGetValue(npcId, out var n))
                 return new VariantMesh { positions = Array.Empty<float>(), colors = Array.Empty<Color32>() };
             float s = n.scaleXZ / 128f;
-            return BuildMesh(n.models, false, s, n.scaleY / 128f, s, n.recolorFrom, n.recolorTo, n.retextureFrom, n.retextureTo);
+            return BuildMesh(n.models, false, s, n.scaleY / 128f, s, n.recolorFrom, n.recolorTo, n.retextureFrom, n.retextureTo, true);
         }
 
         private VariantMesh BuildMesh(int[] modelIds, bool mirror, float sx, float sy, float sz,
-            ushort[] recolorFrom, ushort[] recolorTo, ushort[] retextureFrom, ushort[] retextureTo)
+            ushort[] recolorFrom, ushort[] recolorTo, ushort[] retextureFrom, ushort[] retextureTo, bool actorLight)
         {
             int faces = 0;
             foreach (var mid in modelIds)
                 if (models.TryGetValue(mid, out var m)) faces += m.colors.Length;
             var mesh = new VariantMesh { positions = new float[faces * 9], colors = new Color32[faces * 3], faceCount = faces };
+            if (!actorLight) { mesh.normals = new float[faces * 9]; mesh.hsls = new ushort[faces * 3]; }
             int f = 0;
             foreach (var mid in modelIds)
             {
                 if (!models.TryGetValue(mid, out var m)) continue;
+                var vn = VertexNormals(mid, m);
                 int nf = m.colors.Length;
                 for (int i = 0; i < nf; i++)
                 {
@@ -403,12 +409,23 @@ namespace OsrsPort
                     if (tex != -1)
                         for (int k = 0; k < retextureFrom.Length; k++)
                             if (tex == retextureFrom[k]) { tex = retextureTo[k]; break; }
-                    Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
+                    ushort baseHsl = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? th : hsl;
                     int o = f * 9;
                     WriteVertex(mesh.positions, o, m.positions, a, mirror, sx, sy, sz);
                     WriteVertex(mesh.positions, o + 3, m.positions, b, mirror, sx, sy, sz);
                     WriteVertex(mesh.positions, o + 6, m.positions, c, mirror, sx, sy, sz);
-                    mesh.colors[f * 3] = col; mesh.colors[f * 3 + 1] = col; mesh.colors[f * 3 + 2] = col;
+                    int ca = a, cb = b, cc = c;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int vi = k == 0 ? ca : k == 1 ? cb : cc;
+                        float nx = vn[vi * 3], ny = vn[vi * 3 + 1], nz = mirror ? -vn[vi * 3 + 2] : vn[vi * 3 + 2];
+                        mesh.colors[f * 3 + k] = actorLight ? OsrsLight.Actor(baseHsl, nx, ny, nz) : OsrsLight.Loc(baseHsl, nx, ny, nz, 0f);
+                        if (!actorLight)
+                        {
+                            mesh.normals[o + k * 3] = nx; mesh.normals[o + k * 3 + 1] = ny; mesh.normals[o + k * 3 + 2] = nz;
+                            mesh.hsls[f * 3 + k] = baseHsl;
+                        }
+                    }
                     f++;
                 }
             }
@@ -470,6 +487,7 @@ namespace OsrsPort
                 foreach (var mid in part.models)
                 {
                     if (mid < 0 || !models.TryGetValue(mid, out var m)) continue;
+                    var vn = VertexNormals(mid, m);
                     int nf = m.colors.Length;
                     // OSRS model offset is in model units with Y pointing down; exported Y points up.
                     float dy = -part.offset;
@@ -484,13 +502,14 @@ namespace OsrsPort
                         if (tex != -1)
                             for (int k = 0; k < part.xf.Length; k++)
                                 if (tex == part.xf[k]) { tex = part.xt[k]; break; }
-                        Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
+                        ushort baseHsl = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? th : hsl;
                         int o = f * 9;
                         for (int c = 0; c < 3; c++)
                         {
-                            WriteVertex(mesh.positions, o + c * 3, m.positions, m.faces[i * 3 + c], false, 1f, 1f, 1f);
+                            int vi = m.faces[i * 3 + c];
+                            WriteVertex(mesh.positions, o + c * 3, m.positions, vi, false, 1f, 1f, 1f);
                             mesh.positions[o + c * 3 + 1] += dy;
-                            mesh.colors[f * 3 + c] = col;
+                            mesh.colors[f * 3 + c] = OsrsLight.Actor(baseHsl, vn[vi * 3], vn[vi * 3 + 1], vn[vi * 3 + 2]);
                         }
                         f++;
                     }
@@ -575,6 +594,7 @@ namespace OsrsPort
                 {
                     if (mid < 0 || !models.TryGetValue(mid, out var m)) continue;
                     int mv = m.positions.Length / 3;
+                    var vn = VertexNormals(mid, m);
                     anim.skins.TryGetValue(mid, out var lab);
                     for (int i = 0; i < mv; i++)
                     {
@@ -597,11 +617,12 @@ namespace OsrsPort
                         if (tex != -1 && part.xf != null)
                             for (int k = 0; k < part.xf.Length; k++)
                                 if (tex == part.xf[k]) { tex = part.xt[k]; break; }
-                        Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
+                        ushort baseHsl = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? th : hsl;
                         for (int c = 0; c < 3; c++)
                         {
-                            d.corner[f * 3 + c] = vb + m.faces[i * 3 + c];
-                            d.colors[f * 3 + c] = col;
+                            int vi = m.faces[i * 3 + c];
+                            d.corner[f * 3 + c] = vb + vi;
+                            d.colors[f * 3 + c] = OsrsLight.Actor(baseHsl, vn[vi * 3], vn[vi * 3 + 1], vn[vi * 3 + 2]);
                         }
                         f++;
                     }
@@ -611,12 +632,100 @@ namespace OsrsPort
             d.Index();
             return d;
         }
+        /// <summary>
+        /// Smooth vertex normals of a model like the OSRS client: each face normal is scaled to
+        /// length 256 and summed into its corners, then averaged. Exported space (Y up, swapped
+        /// winding) yields (nx, -ny, nz) of the client's normal, matching the Y-flipped lights.
+        /// </summary>
+        private float[] VertexNormals(int id, Model m)
+        {
+            return vertexNormals.GetOrAdd(id, _ =>
+            {
+                int nv = m.positions.Length / 3;
+                var n = new float[nv * 3];
+                var count = new int[nv];
+                int nf = m.colors.Length;
+                for (int i = 0; i < nf; i++)
+                {
+                    int a = m.faces[i * 3], b = m.faces[i * 3 + 1], c = m.faces[i * 3 + 2];
+                    float ux = m.positions[b * 3] - m.positions[a * 3], uy = m.positions[b * 3 + 1] - m.positions[a * 3 + 1], uz = m.positions[b * 3 + 2] - m.positions[a * 3 + 2];
+                    float vx = m.positions[c * 3] - m.positions[a * 3], vy = m.positions[c * 3 + 1] - m.positions[a * 3 + 1], vz = m.positions[c * 3 + 2] - m.positions[a * 3 + 2];
+                    float fx = uy * vz - uz * vy, fy = uz * vx - ux * vz, fz = ux * vy - uy * vx;
+                    float len = Mathf.Sqrt(fx * fx + fy * fy + fz * fz);
+                    if (len < 1e-6f) continue;
+                    float k = 256f / len;
+                    fx *= k; fy *= k; fz *= k;
+                    foreach (int v in new[] { a, b, c })
+                    {
+                        n[v * 3] += fx; n[v * 3 + 1] += fy; n[v * 3 + 2] += fz;
+                        count[v]++;
+                    }
+                }
+                for (int v = 0; v < nv; v++)
+                    if (count[v] > 1) { n[v * 3] /= count[v]; n[v * 3 + 1] /= count[v]; n[v * 3 + 2] /= count[v]; }
+                return n;
+            });
+        }
+
         private static void WriteVertex(float[] dst, int o, short[] src, int index, bool mirror, float sx, float sy, float sz)
         {
             dst[o] = src[index * 3] * sx;
             dst[o + 1] = src[index * 3 + 1] * sy;
             float z = src[index * 3 + 2] * sz;
             dst[o + 2] = mirror ? -z : z;
+        }
+    }
+
+    /// <summary>
+    /// The OSRS client's model lighting, baked into vertex colours: lightness = ambient +
+    /// dot(light, normal) / (contrast * |light| / 256), multiplied into the HSL lightness.
+    /// Lights are the client's vectors with Y negated for the exported (Y up) space.
+    /// </summary>
+    public static class OsrsLight
+    {
+        private const float LocLx = -50f, LocLy = 10f, LocLz = -50f;
+        private const float ActorLx = -30f, ActorLy = 50f, ActorLz = -30f;
+        private const int Ambient = 64;
+        private static readonly float LocK = Mathf.Floor(768f * Mathf.Floor(Mathf.Sqrt(LocLx * LocLx + LocLy * LocLy + LocLz * LocLz)) / 256f);
+        private static readonly float ActorK = Mathf.Floor(850f * Mathf.Floor(Mathf.Sqrt(ActorLx * ActorLx + ActorLy * ActorLy + ActorLz * ActorLz)) / 256f);
+
+        /// <summary>A loc corner placed with <paramref name="yaw"/> radians: the light is turned into model space.</summary>
+        public static Color32 Loc(ushort hsl, float nx, float ny, float nz, float yaw)
+        {
+            float s = Mathf.Sin(yaw), c = Mathf.Cos(yaw);
+            float lx = c * LocLx - s * LocLz, lz = s * LocLx + c * LocLz;
+            return Shade(hsl, Ambient + (lx * nx + LocLy * ny + lz * nz) / LocK);
+        }
+
+        public static Color32 Actor(ushort hsl, float nx, float ny, float nz)
+        {
+            return Shade(hsl, Ambient + (ActorLx * nx + ActorLy * ny + ActorLz * nz) / ActorK);
+        }
+
+        public static void ShadeLoc(WorldData.VariantMesh vm, float yaw, Color32[] dst, int offset)
+        {
+            float s = Mathf.Sin(yaw), c = Mathf.Cos(yaw);
+            float lx = c * LocLx - s * LocLz, lz = s * LocLx + c * LocLz;
+            int n = vm.faceCount * 3;
+            if (vm.normals == null) { Array.Copy(vm.colors, 0, dst, offset, n); return; }
+            for (int k = 0; k < n; k++)
+            {
+                float d = lx * vm.normals[k * 3] + LocLy * vm.normals[k * 3 + 1] + lz * vm.normals[k * 3 + 2];
+                dst[offset + k] = Shade(vm.hsls[k], Ambient + d / LocK);
+            }
+        }
+
+        private static Color32 Shade(ushort hsl, float light)
+        {
+            int l = ((hsl & 127) * (int)light) >> 7;
+            if (l < 2) l = 2; else if (l > 126) l = 126;
+            return JagexColor.ToColor32((ushort)((hsl & 0xFF80) | l));
+        }
+
+        /// <summary>The client's tile light for a terrain normal (Y up, unit length): flat ground is about 108.</summary>
+        public static float Terrain(float nx, float ny, float nz)
+        {
+            return 96f + 256f * (LocLx * nx + LocLy * ny + LocLz * nz) / LocK;
         }
     }
 

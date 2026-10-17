@@ -52,16 +52,12 @@ Shader "OsrsPort/VertexColorLit"
                 return o;
             }
 
-            half4 frag(Varyings i, FRONT_FACE_TYPE face : FRONT_FACE_SEMANTIC) : SV_Target
+            half4 frag(Varyings i) : SV_Target
             {
-                float3 n = normalize(i.normalWS) * IS_FRONT_VFACE(face, 1.0, -1.0);
-                half3 albedo = i.color.rgb;
+                half3 c = i.color.rgb;
                 #ifndef UNITY_COLORSPACE_GAMMA
-                albedo = SRGBToLinear(albedo);
+                c = SRGBToLinear(c);
                 #endif
-                Light light = GetMainLight();
-                half ndl = saturate(dot(n, light.direction));
-                half3 c = albedo * (_Ambient + (1.0 - _Ambient) * ndl * light.color);
                 c = MixFog(c, i.fogFactor);
                 return half4(c, 1.0);
             }

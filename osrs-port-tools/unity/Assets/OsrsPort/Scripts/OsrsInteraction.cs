@@ -293,21 +293,35 @@ namespace OsrsPort
             }
         }
 
-        /// <summary>Tab locks the camera onto the nearest enemy in view (Tab again cycles, Tab with none in view releases).</summary>
+        /// <summary>
+        /// Tab locks the camera onto the nearest enemy in view and Tab again releases it;
+        /// Shift+Tab cycles targets. A hard mouse flick, Escape or the target dying or
+        /// moving far away also releases the lock.
+        /// </summary>
         private void ReadLockOnInput()
         {
             if (!InputAllowed) return;
-            bool tab;
+            bool tab, shift, escape;
+            float flick;
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current;
             tab = kb != null && kb.tabKey.wasPressedThisFrame;
+            shift = kb != null && kb.shiftKey.isPressed;
+            escape = kb != null && kb.escapeKey.wasPressedThisFrame;
+            flick = Mouse.current != null ? Mouse.current.delta.ReadValue().magnitude : 0f;
 #else
             tab = Input.GetKeyDown(KeyCode.Tab);
+            shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            escape = Input.GetKeyDown(KeyCode.Escape);
+            flick = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y")).magnitude * 20f;
 #endif
-            if (lockedNpc != null && (!lockedNpc.isActiveAndEnabled || lockedNpc.hp == 0))
+            if (lockedNpc != null && (!lockedNpc.isActiveAndEnabled || lockedNpc.hp == 0
+                || Vector3.Distance(lockedNpc.transform.position, transform.position) > LockBreakDistance))
                 lockedNpc = null;
             if (tab)
-                lockedNpc = NextLockTarget(lockedNpc);
+                lockedNpc = lockedNpc != null && !shift ? null : NextLockTarget(lockedNpc);
+            else if (lockedNpc != null && (escape || (!CursorMode && flick > LockBreakFlick)))
+                lockedNpc = null;
             if (lockedNpc != null)
             {
                 var fpc = GetComponent<FirstPersonController>();
@@ -315,6 +329,9 @@ namespace OsrsPort
                 if (fpc != null) fpc.LookToward(aim, 10f * Time.deltaTime);
             }
         }
+
+        private const float LockBreakDistance = 16f;
+        private const float LockBreakFlick = 60f;
 
         private OsrsNpcRef NextLockTarget(OsrsNpcRef current)
         {
@@ -879,7 +896,7 @@ namespace OsrsPort
                         GUI.Box(new Rect(sp.x - 7, Screen.height - sp.y - 7, 14, 14), GUIContent.none);
                         GUI.color = Color.white;
                     }
-                    Shadowed(new Rect(cx - 100, cy + 112, 200, 20), "[Tab] locked on", smallStyle, TextAnchor.UpperCenter);
+                    Shadowed(new Rect(cx - 160, cy + 112, 320, 20), "locked on  [Tab] release  [Shift+Tab] next", smallStyle, TextAnchor.UpperCenter);
                 }
                 if (blocking)
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);

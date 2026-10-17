@@ -19,7 +19,9 @@ namespace OsrsPort
         public float jumpHeight = 0.6f;
         public float gravity = -20f;
         public float lookSensitivity = 0.12f;
-        public float eyeHeight = 1.35f;
+        public float eyeHeight = 1.42f;
+        /// <summary>How far ahead of the body's centre the first-person eye sits, so the head isn't in view.</summary>
+        public float eyeForward = 0.22f;
         /// <summary>Extra camera rotation (pitch, yaw, roll) other scripts add for swings and blocking.</summary>
         public Vector3 cameraOffsetEuler;
         public float thirdPersonDistance = 3.5f;
@@ -48,7 +50,7 @@ namespace OsrsPort
         {
             body = GetComponent<CharacterController>();
             body.height = 1.5f;
-            body.radius = 0.3f;
+            body.radius = 0.22f;
             body.center = new Vector3(0f, 0.75f, 0f);
             body.stepOffset = 0.45f;
             body.slopeLimit = 55f;
@@ -62,7 +64,7 @@ namespace OsrsPort
             cameraBoom = camGo.transform;
             cameraBoom.SetParent(cameraPivot, false);
             var cam = camGo.AddComponent<Camera>();
-            cam.nearClipPlane = 0.05f;
+            cam.nearClipPlane = 0.03f;
             cam.farClipPlane = 300f;
             cam.fieldOfView = 75f;
             camGo.AddComponent<AudioListener>();
@@ -77,7 +79,7 @@ namespace OsrsPort
                 out bool toggleNoclip, out bool escape, out bool click, out bool toggleView, out bool dodge);
 
             if (toggleView) SetThirdPerson(!ThirdPerson);
-            if (ThirdPerson) RefreshAvatar();
+            RefreshAvatar();
             UpdateCameraBoom();
             if (escape) LockCursor(false);
             if (click && Cursor.lockState != CursorLockMode.Locked && !OsrsInteraction.CursorMode) LockCursor(true);
@@ -159,8 +161,7 @@ namespace OsrsPort
         public void SetThirdPerson(bool on)
         {
             ThirdPerson = on;
-            if (on) RefreshAvatar();
-            if (avatar != null) avatar.SetActive(on);
+            RefreshAvatar();
         }
 
         /// <summary>Rebuilds the avatar when our look (identkits, colours, worn items) changed.</summary>
@@ -174,21 +175,26 @@ namespace OsrsPort
             if (avatar != null) Destroy(avatar);
             avatar = BuildAvatar();
             avatarLookKey = key;
-            if (avatar != null) avatar.SetActive(ThirdPerson);
         }
 
         /// <summary>Pulls the camera back behind the shoulder in third person, stopping short of walls.</summary>
         private void UpdateCameraBoom()
         {
-            if (!ThirdPerson) { cameraBoom.localPosition = Vector3.zero; return; }
+            float roll = Dodging ? Mathf.Sin(Mathf.Clamp01((Time.time - dodgeStart) / dodgeDuration) * Mathf.PI) * 20f : 0f;
+            if (avatar != null) avatar.transform.localRotation = Quaternion.Euler(-roll, 180f, 0f);
+            if (!ThirdPerson)
+            {
+                cameraPivot.localPosition = new Vector3(0f, eyeHeight, eyeForward);
+                cameraBoom.localPosition = Vector3.zero;
+                return;
+            }
+            cameraPivot.localPosition = new Vector3(0f, eyeHeight, 0f);
             var origin = cameraPivot.position;
             var back = -cameraPivot.forward;
             float dist = thirdPersonDistance;
             if (Physics.SphereCast(origin, 0.25f, back, out var hit, thirdPersonDistance, OsrsNpcManager.WorldMask))
                 dist = Mathf.Max(0.3f, hit.distance - 0.1f);
             cameraBoom.localPosition = new Vector3(0.35f, 0.25f, -dist);
-            float roll = Dodging ? Mathf.Sin(Mathf.Clamp01((Time.time - dodgeStart) / dodgeDuration) * Mathf.PI) * 20f : 0f;
-            if (avatar != null) avatar.transform.localRotation = Quaternion.Euler(-roll, 180f, 0f);
         }
 
         private GameObject BuildAvatar()

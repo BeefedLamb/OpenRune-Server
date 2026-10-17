@@ -9,6 +9,7 @@ import net.rsprot.protocol.game.outgoing.interfaces.IfSetNpcHead
 import net.rsprot.protocol.game.outgoing.interfaces.IfSetText
 import net.rsprot.protocol.game.outgoing.misc.player.RunClientScript
 import net.rsprot.protocol.game.outgoing.misc.player.MessageGame
+import net.rsprot.protocol.game.outgoing.sound.SynthSound
 import org.rsmod.game.client.Client
 import org.rsmod.game.entity.Player
 import org.rsmod.game.ui.Component
@@ -42,6 +43,7 @@ class LinkClient(private val connection: LinkConnection) : Client<Any, Any> {
                 dialogueDirty = true
             }
             is RunClientScript -> onClientScript(message)
+            is SynthSound -> connection.send("SND ${message.id} ${message.loops} ${message.delay}")
         }
     }
 

@@ -37,7 +37,7 @@ namespace OsrsPort
         private readonly Dictionary<(int, int), LoadedSquare> loaded = new Dictionary<(int, int), LoadedSquare>();
         private readonly HashSet<(int, int)> pending = new HashSet<(int, int)>();
         private readonly Queue<SquareBuild> uploads = new Queue<SquareBuild>();
-        private readonly Dictionary<int, Mesh> variantMeshes = new Dictionary<int, Mesh>();
+        private readonly Dictionary<(int, int), Mesh> variantMeshes = new Dictionary<(int, int), Mesh>();
         private readonly Dictionary<(int x, int z, int level, int layer), LocChange> locChanges = new Dictionary<(int, int, int, int), LocChange>();
         private readonly Dictionary<(int x, int z, int level), PatchState> patchStates = new Dictionary<(int, int, int), PatchState>();
         private readonly List<HouseRoom> houseRooms = new List<HouseRoom>();
@@ -236,6 +236,29 @@ namespace OsrsPort
             }
         }
 
+        /// <summary>Open doors and gates (first option "Close") swing into the doorway; they must not block walking.</summary>
+        private static bool IsOpenPassage(WorldData.LocDef def)
+        {
+            if (def == null) return false;
+            foreach (var op in def.ops)
+                if (op == "Close") return true;
+            return false;
+        }
+
+        private static float TerrainLight(float[] hgt, int cx, int cz, float y)
+        {
+            float H(int x, int z)
+            {
+                if (x < 0 || x > 64 || z < 0 || z > 64) return y;
+                float v = hgt[x * 65 + z];
+                return float.IsNaN(v) ? y : v;
+            }
+            float dx = H(cx + 1, cz) - H(cx - 1, cz), dz = H(cx, cz + 1) - H(cx, cz - 1);
+            var n = new Vector3(-dx, 2f, -dz).normalized;
+            float light = OsrsLight.Terrain(n.x, n.y, n.z);
+            return Mathf.Pow(Mathf.Max(light, 8f) / 128f, 0.7f);
+        }
+
         private static int LayerOf(int shape)
         {
             if (shape <= 3) return 0;
@@ -277,6 +300,13 @@ namespace OsrsPort
                     p += 6;
                 }
                 for (int i = 0; i < nv; i++) { tcol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255); p += 3; }
+                for (int i = 0; i < nv; i++)
+                {
+                    int cx = Mathf.RoundToInt(tpos[i * 3] - ox), cz = Mathf.RoundToInt(tpos[i * 3 + 2] - oz);
+                    float f = TerrainLight(hgt, cx, cz, tpos[i * 3 + 1]);
+                    var tc = tcol[i];
+                    tcol[i] = new Color32((byte)Mathf.Min(255, tc.r * f), (byte)Mathf.Min(255, tc.g * f), (byte)Mathf.Min(255, tc.b * f), 255);
+                }
                 for (int t = 0; t + 2 < nv; t += 3)
                 {
                     float mx = (tpos[t * 3] + tpos[t * 3 + 3] + tpos[t * 3 + 6]) / 3f - ox;
@@ -370,8 +400,8 @@ namespace OsrsPort
                     dst[(o + k) * 3] = px + (c * x + s * z) / 128f;
                     dst[(o + k) * 3 + 1] = py + y / 128f;
                     dst[(o + k) * 3 + 2] = pz + (-s * x + c * z) / 128f;
-                    dcol[o + k] = vm.colors[k];
                 }
+                OsrsLight.ShadeLoc(vm, ang, dcol, o);
                 if (decor) de[lvi] += n; else so[lvi] += n;
             }
             return build;
@@ -506,9 +536,9 @@ namespace OsrsPort
             meshOut = mesh;
         }
 
-        private Mesh VariantMesh(int vid)
+        private Mesh VariantMesh(int vid, int yaw)
         {
-            if (variantMeshes.TryGetValue(vid, out var cached)) return cached;
+            if (variantMeshes.TryGetValue((vid, yaw), out var cached)) return cached;
             var vm = world.GetVariantMesh(vid);
             Mesh mesh = null;
             if (vm.faceCount > 0)
@@ -528,17 +558,19 @@ namespace OsrsPort
                 mesh = new Mesh { name = $"variant_{vid}", indexFormat = IndexFormat.UInt32 };
                 mesh.SetVertices(verts);
                 mesh.SetNormals(normals);
-                mesh.SetColors(vm.colors);
+                var lit = new Color32[nv];
+                OsrsLight.ShadeLoc(vm, yaw * (2f * Mathf.PI / 2048f), lit, 0);
+                mesh.SetColors(lit);
                 mesh.SetTriangles(indices, 0, false);
                 mesh.RecalculateBounds();
             }
-            variantMeshes[vid] = mesh;
+            variantMeshes[(vid, yaw)] = mesh;
             return mesh;
         }
 
         private void AddDynamic(LoadedSquare sq, DynamicSpec spec)
         {
-            var mesh = VariantMesh(spec.vid);
+            var mesh = VariantMesh(spec.vid, Mathf.RoundToInt(spec.yaw));
             if (mesh == null) return;
             world.locs.TryGetValue(spec.locId, out var def);
             var go = new GameObject(def != null ? $"loc_{spec.locId}_{def.name}" : $"loc_{spec.locId}");
@@ -550,7 +582,7 @@ namespace OsrsPort
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = material;
             r.shadowCastingMode = ShadowCastingMode.Off;
-            if (spec.collide)
+            if (spec.collide && !IsOpenPassage(def))
             {
                 var col = go.AddComponent<MeshCollider>();
                 col.sharedMesh = mesh;

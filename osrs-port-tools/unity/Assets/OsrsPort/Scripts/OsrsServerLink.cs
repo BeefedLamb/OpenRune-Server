@@ -382,6 +382,28 @@ namespace OsrsPort
                 case "ANIM":
                     if (int.TryParse(rest, out int anim)) { LastAnimId = anim; LastAnimTime = Time.time; if (OsrsAnimator.Local != null) OsrsAnimator.Local.Play(anim); }
                     break;
+                case "SND":
+                    {
+                        var p = rest.Split(' ');
+                        if (p.Length >= 3 && int.TryParse(p[0], out int synth) && int.TryParse(p[1], out int loops) && int.TryParse(p[2], out int delay))
+                            OsrsSound.Ensure().Play(synth, loops, delay);
+                        break;
+                    }
+                case "SNDA":
+                    {
+                        // SNDA synth x z level loops delay range
+                        var p = rest.Split(' ');
+                        if (p.Length >= 7 && int.TryParse(p[0], out int synth) && int.TryParse(p[1], out int sx)
+                            && int.TryParse(p[2], out int sz) && int.TryParse(p[3], out int slv)
+                            && int.TryParse(p[4], out int loops) && int.TryParse(p[5], out int delay)
+                            && int.TryParse(p[6], out int range) && slv == currentLevel)
+                        {
+                            var at = new Vector3(sx + 0.5f, transform.position.y + 1f, sz + 0.5f);
+                            if (Vector3.Distance(at, transform.position) <= range + 2f)
+                                OsrsSound.Ensure().PlayAt(synth, loops, delay, at, range);
+                        }
+                        break;
+                    }
                 case "NANIM":
                     {
                         var p = rest.Split(' ');
