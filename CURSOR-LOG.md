@@ -71,3 +71,20 @@ What works:
 - The castle's level-3 locs are roof pieces (loc 1913, no options) over the inner rooms. No stair or ladder in this castle reaches a floor on plane 3. `loc.ladder`, `loc.laddermiddle`, and `loc.laddertop` already have climb content groups, so no new op was added.
 
 Where this stopped: task 3 is done. Tasks 4–7 were not started. Lamb is saved on the first floor at 3205,3228.
+
+## 4. Animation-frame sounds
+
+`:or-cache:exportSequences` now writes each sequence's frame sounds as a 17th tab column on `seqs.txt`. Each entry is `frame:synth:loops:location:retain`. The export wrote 14514 sequences (944 skeletal, 1616 with at least one frame sound, 0 undecodable) to `osrs-port-tools/unity/Assets/StreamingAssets/world/seqs.txt` and the same file was copied to `E:\osrs\My project\Assets\StreamingAssets\world\seqs.txt`. StreamingAssets stays untracked. `OsrsSound` synthesis was not changed.
+
+Files changed:
+
+- `or-cache/src/main/kotlin/dev/openrune/tools/SequenceExporter.kt` — the extra column, from `soundEffects` and `skeletalSounds`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsAnimation.cs` — the same file is copied into `E:\osrs\My project\Assets\OsrsPort`. `OsrsAnimator.Play` and every frame `Advance` enters call `Hear`. The local player uses `OsrsSound.Play`. Every other animator uses `OsrsSound.PlayAt` at the body, with the frame's location as the range (8 tiles when the location is 0).
+
+Tested in the open Unity editor (`E:\osrs\My project`, 6000.6.5f1), logged in as Lamb, against the server already listening on 127.0.0.1:43610. Sequence 80 (`dragon_attack`) has one frame sound: frame 9, synth 3752, loops 1, location 15, retain 0. Playing it on an animator marked as the local player logged `framesnd local plays=1 last=3752`. Playing it again with that mark cleared logged `framesnd npc plays=1 last=3752`. Both plays went through `OsrsSound`, and 3752 is the synth stored on that frame. Goblin attack sequences 309 and 310 and the unarmed punch sequence 422 have an empty sound column, so they were not the check.
+
+What works: a sequence that has a frame sound plays that synth when the frame is entered, for the player's own animation and for another body.
+
+Still unused: `retain` is exported and not applied. Skeletal sequences are still skipped by the animator, so their exported sounds do not play. A location of 0 uses an 8-tile range.
+
+Where this stopped: task 4 is done. Tasks 5–7 were not started.

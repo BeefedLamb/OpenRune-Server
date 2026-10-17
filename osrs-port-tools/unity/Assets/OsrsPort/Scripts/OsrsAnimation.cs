@@ -16,10 +16,16 @@ namespace OsrsPort
     /// </summary>
     public class OsrsAnimData
     {
+        public struct FrameSound
+        {
+            public int id, loops, location, retain;
+        }
+
         public class Seq
         {
             public int id, frameStep, maxLoops, forcedPriority, priority, replyMode, precedenceAnimating;
             public int[] delays, frames, interleave;
+            public FrameSound[] sounds;
         }
 
         public class FrameMap
@@ -61,6 +67,7 @@ namespace OsrsPort
                         precedenceAnimating = int.Parse(p[7]),
                         delays = Ints(p[13]), frames = Ints(p[14]), interleave = Ints(p[15]),
                     };
+                    s.sounds = FrameSounds(p.Length > 16 ? p[16] : "", s.frames.Length);
                     if (s.frames.Length == 0) continue;
                     a.seqs[s.id] = s;
                 }
@@ -114,6 +121,23 @@ namespace OsrsPort
         }
 
         public bool Playable(int seq) => seq >= 0 && seqs.ContainsKey(seq);
+
+        private static FrameSound[] FrameSounds(string s, int frames)
+        {
+            var r = new FrameSound[frames];
+            if (string.IsNullOrEmpty(s)) return r;
+            foreach (var tok in s.Split(','))
+            {
+                var a = tok.Split(':');
+                if (a.Length < 5) continue;
+                if (!int.TryParse(a[0], out int frame) || frame < 0 || frame >= frames) continue;
+                r[frame] = new FrameSound
+                {
+                    id = int.Parse(a[1]), loops = int.Parse(a[2]), location = int.Parse(a[3]), retain = int.Parse(a[4]),
+                };
+            }
+            return r;
+        }
 
         private static int[] Ints(string s)
         {
@@ -224,6 +248,7 @@ namespace OsrsPort
         {
             if (anims == null || !anims.Playable(seq)) { actionSeq = -1; return; }
             actionSeq = seq; actionFrame = 0; actionTime = 0f; actionLoops = 0;
+            Hear(anims.seqs[seq], 0);
         }
 
         private void Update()
@@ -232,7 +257,11 @@ namespace OsrsPort
             float dt = Time.deltaTime;
             int want = moving ? (running && anims.Playable(runSeq) ? runSeq : anims.Playable(walkSeq) ? walkSeq : standSeq) : standSeq;
             if (!anims.Playable(want)) want = -1;
-            if (want != baseSeq) { baseSeq = want; baseFrame = 0; baseTime = 0f; }
+            if (want != baseSeq)
+            {
+                baseSeq = want; baseFrame = 0; baseTime = 0f;
+                if (baseSeq >= 0) Hear(anims.seqs[baseSeq], 0);
+            }
             if (baseSeq >= 0) Advance(anims.seqs[baseSeq], ref baseFrame, ref baseTime, dt, true, ref actionLoops, false);
             if (actionSeq >= 0 && !Advance(anims.seqs[actionSeq], ref actionFrame, ref actionTime, dt, false, ref actionLoops, true))
                 actionSeq = -1;
@@ -247,7 +276,7 @@ namespace OsrsPort
         }
 
         /// <summary>Steps a sequence by dt. Returns false when a one-shot finished.</summary>
-        private static bool Advance(OsrsAnimData.Seq s, ref int frame, ref float time, float dt, bool loop, ref int loops, bool countLoops)
+        private bool Advance(OsrsAnimData.Seq s, ref int frame, ref float time, float dt, bool loop, ref int loops, bool countLoops)
         {
             time += dt;
             int guard = 0;
@@ -257,14 +286,31 @@ namespace OsrsPort
                 if (time < delay * Cycle) break;
                 time -= delay * Cycle;
                 frame++;
-                if (frame < s.frames.Length) continue;
-                if (loop) { frame = 0; continue; }
+                if (frame < s.frames.Length) { Hear(s, frame); continue; }
+                if (loop) { frame = 0; Hear(s, frame); continue; }
                 if (s.frameStep < 0) return false;
                 frame -= s.frameStep;
                 if (countLoops && ++loops >= Math.Max(1, s.maxLoops)) return false;
                 if (frame < 0 || frame >= s.frames.Length) return false;
+                Hear(s, frame);
             }
             return true;
+        }
+
+        /// <summary>Plays the sound stored on this frame. The local player hears it directly; everyone else is positional.</summary>
+        private void Hear(OsrsAnimData.Seq s, int frame)
+        {
+            if (s.sounds == null || frame < 0 || frame >= s.sounds.Length) return;
+            int id = s.sounds[frame].id;
+            if (id <= 0) return;
+            var audio = OsrsSound.Ensure();
+            if (this == Local)
+                audio.Play(id, s.sounds[frame].loops, 0);
+            else
+            {
+                int loc = s.sounds[frame].location;
+                audio.PlayAt(id, s.sounds[frame].loops, 0, transform.position, loc > 0 ? loc : 8f);
+            }
         }
 
         private void Pose(int seq, int frame)
