@@ -75,8 +75,9 @@ Shader "OsrsPort/VertexColorLit"
                 {
                     float slice = i.uv.z - 1.0;
                     float2 scroll = SAMPLE_TEXTURE2D_LOD(_ScrollTex, sampler_ScrollTex, float2((slice + 0.5) / 256.0, 0.5), 0).rg;
-                    half3 tex = SAMPLE_TEXTURE2D_ARRAY(_TexArr, sampler_TexArr, i.uv.xy + scroll * _Time.y, slice).rgb;
-                    c = tex * light;
+                    half4 tex = SAMPLE_TEXTURE2D_ARRAY(_TexArr, sampler_TexArr, i.uv.xy + scroll * _Time.y, slice);
+                    clip(tex.a - 0.5);
+                    c = tex.rgb * light;
                 }
                 c = MixFog(c, i.fogFactor);
                 return half4(c, 1.0);
@@ -97,13 +98,43 @@ Shader "OsrsPort/VertexColorLit"
             #pragma fragment frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            float4 vert(float4 positionOS : POSITION) : SV_POSITION
+            CBUFFER_START(UnityPerMaterial)
+                half _Ambient;
+                half _HasTex;
+            CBUFFER_END
+            TEXTURE2D_ARRAY(_TexArr);
+            SAMPLER(sampler_TexArr);
+            TEXTURE2D(_ScrollTex);
+            SAMPLER(sampler_ScrollTex);
+
+            struct Attributes
             {
-                return TransformObjectToHClip(positionOS.xyz);
+                float4 positionOS : POSITION;
+                float3 uv : TEXCOORD0;
+            };
+
+            struct Varyings
+            {
+                float4 positionCS : SV_POSITION;
+                float3 uv : TEXCOORD0;
+            };
+
+            Varyings vert(Attributes input)
+            {
+                Varyings o;
+                o.positionCS = TransformObjectToHClip(input.positionOS.xyz);
+                o.uv = input.uv;
+                return o;
             }
 
-            half frag() : SV_Target
+            half frag(Varyings i) : SV_Target
             {
+                if (_HasTex > 0.5 && i.uv.z > 0.5)
+                {
+                    float slice = i.uv.z - 1.0;
+                    float2 scroll = SAMPLE_TEXTURE2D_LOD(_ScrollTex, sampler_ScrollTex, float2((slice + 0.5) / 256.0, 0.5), 0).rg;
+                    clip(SAMPLE_TEXTURE2D_ARRAY(_TexArr, sampler_TexArr, i.uv.xy + scroll * _Time.y, slice).a - 0.5);
+                }
                 return 0;
             }
             ENDHLSL
@@ -121,16 +152,27 @@ Shader "OsrsPort/VertexColorLit"
             #pragma fragment frag
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
+            CBUFFER_START(UnityPerMaterial)
+                half _Ambient;
+                half _HasTex;
+            CBUFFER_END
+            TEXTURE2D_ARRAY(_TexArr);
+            SAMPLER(sampler_TexArr);
+            TEXTURE2D(_ScrollTex);
+            SAMPLER(sampler_ScrollTex);
+
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float3 normalOS : NORMAL;
+                float3 uv : TEXCOORD0;
             };
 
             struct Varyings
             {
                 float4 positionCS : SV_POSITION;
                 float3 normalWS : TEXCOORD0;
+                float3 uv : TEXCOORD1;
             };
 
             Varyings vert(Attributes input)
@@ -138,11 +180,18 @@ Shader "OsrsPort/VertexColorLit"
                 Varyings o;
                 o.positionCS = TransformObjectToHClip(input.positionOS.xyz);
                 o.normalWS = TransformObjectToWorldNormal(input.normalOS);
+                o.uv = input.uv;
                 return o;
             }
 
             half4 frag(Varyings i, FRONT_FACE_TYPE face : FRONT_FACE_SEMANTIC) : SV_Target
             {
+                if (_HasTex > 0.5 && i.uv.z > 0.5)
+                {
+                    float slice = i.uv.z - 1.0;
+                    float2 scroll = SAMPLE_TEXTURE2D_LOD(_ScrollTex, sampler_ScrollTex, float2((slice + 0.5) / 256.0, 0.5), 0).rg;
+                    clip(SAMPLE_TEXTURE2D_ARRAY(_TexArr, sampler_TexArr, i.uv.xy + scroll * _Time.y, slice).a - 0.5);
+                }
                 float3 n = normalize(i.normalWS) * IS_FRONT_VFACE(face, 1.0, -1.0);
                 return half4(n, 0.0);
             }

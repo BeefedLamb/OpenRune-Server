@@ -39,6 +39,14 @@ The world was re-exported to a temp folder and then copied into `E:\osrs\My proj
 
 Tested in play mode at the Lumbridge spawn (camera 3221.5, 3.40, 3218.5). The console logged `215 textures, 128px` and no exceptions. A frame from the player camera shows stone castle walls, the wooden castle door, grass, the grey path, and the hedges with real textures, still shaded and with fog. 19 terrain meshes in view carried 21,441 textured vertices, and 385 other meshes had a texture.
 
-Still wrong: the courtyard fountain's water is a black column with white specks. Animated water is exported (22 textures scroll) but that fountain does not read as water yet. Flat-coloured tiles that have no cache texture stay flat, which is the old underlay path.
+Still wrong at first: the courtyard fountain's water was a black column with white specks. Flat-coloured tiles that have no cache texture stay flat, which is the old underlay path.
 
-Stopped here. Tasks 3–7 are not started.
+### Fountain
+
+The Lumbridge courtyard fountain is `loc` 879, model 1497, at 3221,3226 and 3221,3210. Its jet uses texture 17, a sprite of blue droplets on a transparent background. The shader drew those empty texels as black, so the jet was a solid black column and the white specks were the droplets.
+
+`VertexColorLit.shader` now discards texels with alpha below 0.5 in the forward, depth, and depth-normals passes. Opaque walls are unchanged (their texels are fully opaque). The droplets stay multiplied by the baked light, then fogged, and the jet scrolls because texture 17 is animated.
+
+Tested in play at the Lumbridge spawn, camera (3221.5, 3.40, 3218.5), looking north. The fountain is a stone basin with blue droplets spraying up. The castle walls, wooden door, grass, path, and hedges are unchanged. No shader or console errors.
+
+Upper floors are the next task.
