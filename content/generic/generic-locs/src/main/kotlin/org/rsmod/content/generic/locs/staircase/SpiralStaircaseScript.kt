@@ -4,6 +4,7 @@ import org.rsmod.api.player.protect.ProtectedAccess
 import org.rsmod.api.script.onOpContentLoc1
 import org.rsmod.api.script.onOpContentLoc2
 import org.rsmod.api.script.onOpContentLoc3
+import org.rsmod.api.script.onOpLoc1
 import org.rsmod.api.script.onOpLoc2
 import org.rsmod.api.script.onOpLoc3
 import org.rsmod.game.loc.BoundLocInfo
@@ -26,7 +27,9 @@ class SpiralStaircaseScript : PluginScript() {
             climbDown(it.loc)
         }
 
+        onOpLoc1("loc.spiralstairsbottom_3") { climbUp(it.loc) }
         onOpLoc2("loc.spiralstairsbottom_3") { climbLumbridgeTop(it.loc) }
+        onOpLoc1("loc.spiralstairstop_3") { climbDown(it.loc) }
         onOpLoc2("loc.spiralstairstop_3") { climbLumbridgeBottom(it.loc) }
     }
 

@@ -49,4 +49,20 @@ The Lumbridge courtyard fountain is `loc` 879, model 1497, at 3221,3226 and 3221
 
 Tested in play at the Lumbridge spawn, camera (3221.5, 3.40, 3218.5), looking north. The fountain is a stone basin with blue droplets spraying up. The castle walls, wooden door, grass, path, and hedges are unchanged. No shader or console errors.
 
-Upper floors are the next task.
+Upper floors are task 3 below.
+
+## 3. Upper floors
+
+The four map planes were already built. `OsrsWorldLoader` already shows a plane at or below the player's level and hides higher planes when a roof is overhead (`viewLevel`, `hideRoofs`, `ApplyPlaneState`). That code was left as it is.
+
+What was missing is the Lumbridge castle stair. The ground-floor loc `loc.spiralstairsbottom_3` (56230) only answered Top-floor (op 2, jump two levels). Climb-up (op 1) did nothing. The top loc `loc.spiralstairstop_3` (56231) had the same gap on Climb-down. The middle loc `loc.spiralstairsmiddle` (16672) and `loc.ladder` (16683) already climb through their content groups.
+
+Files changed:
+
+- `content/generic/generic-locs/src/main/kotlin/org/rsmod/content/generic/locs/staircase/SpiralStaircaseScript.kt` — op 1 on `loc.spiralstairsbottom_3` calls the existing `climbUp` (one level). Op 1 on `loc.spiralstairstop_3` calls the existing `climbDown`.
+
+Tested against the restarted server on 127.0.0.1:43610, logged in as Lamb. `OPLOC 56230 3204 3229 0 1` moved the player from tile 3204,3229 level 0 to tile 3206,3229 level 1. Unity then placed the camera at (3206.50, 5.60, 3229.50). That height is the castle's first floor, inside the stone walls, with the arrow slit looking out at the sky. The floor under the player is the upper plane, and the roof is not drawn over that window.
+
+What works: ground-floor Climb-up changes the server level, and the existing plane code stands the player on that plane.
+
+Still broken, and where this stopped: Climb-down on the top stair is bound but was not clicked, because the Unity client was holding the link. Planes 2 and 3 were not stood on. Ladders and the middle spiral stair were already wired and were not retested. Tasks 4–7 were not started.
