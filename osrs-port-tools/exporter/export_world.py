@@ -9,8 +9,9 @@ Writes to <out_dir>/world/:
   index.bin        map square -> pack file, offset, length
   pack_N.bin       concatenated gzip blobs, one per map square (terrain + placements)
 
-Square blob "SQ2": rx, ry (int32), then terrain for planes 0..3 in order, each as
-uint32 vertex count + int16 xyz per vertex + rgb per vertex, then the placements.
+Square blob "SQ3": rx, ry (int32), then terrain for planes 0..3 in order, each as
+uint32 vertex count + int16 xyz per vertex + rgb and a texture byte per vertex
+(0 = flat colour, otherwise texture id + 1), then the placements.
 
 All integers little-endian. Unity coordinates: x = east, y = up, z = north, world position
 in tiles equals the OSRS tile coordinate (no origin shift).
@@ -153,11 +154,13 @@ class WorldExporter:
         cols = bytearray()
         n = 0
         for t in range(0, len(soup.pos), 3):
-            tri = [soup.pos[t], soup.pos[t + 2], soup.pos[t + 1]]
-            tcol = [soup.col[t], soup.col[t + 2], soup.col[t + 1]]
-            for (px, py, pz), (r, g, b) in zip(tri, tcol):
+            order = (t, t + 2, t + 1)
+            for k in order:
+                px, py, pz = soup.pos[k]
+                r, g, b = soup.col[k]
+                tex = soup.tex[k] if soup.tex else -1
                 verts += struct.pack("<hhh", int(px - x0 * 128), int(-py), int(pz - y0 * 128))
-                cols += bytes((int(r * 255), int(g * 255), int(b * 255)))
+                cols += bytes((int(r * 255), int(g * 255), int(b * 255), 0 if tex < 0 else tex + 1))
                 n += 1
         return n, bytes(verts), bytes(cols)
 
@@ -185,7 +188,7 @@ class WorldExporter:
         x0, y0 = rx * 64, ry * 64
         s.compute_heights(x0 - 2, y0 - 2, x0 + 66, y0 + 66)
         places = self.placements(rx, ry)
-        body = bytearray(b"SQ2" + struct.pack("<ii", rx, ry))
+        body = bytearray(b"SQ3" + struct.pack("<ii", rx, ry))
         n = 0
         for z in range(4):
             nz, verts, cols = self.terrain(rx, ry, z)

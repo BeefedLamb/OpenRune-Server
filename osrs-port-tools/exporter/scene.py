@@ -129,15 +129,19 @@ class Scene:
                     out[(wx, wy)] = (r / n, g / n, b / n)
         return out
 
-    def _overlay_color(self, oid):
+    def _overlay(self, oid):
+        """(rgb or None, texture id or -1) for an overlay. A texture still carries its average colour."""
         o = self.overlays.get(oid - 1)
         if o is None:
-            return None
+            return None, -1
         if o.texture >= 0 and o.texture in self.tex_colors:
-            return hsl16_to_rgb(self.tex_colors[o.texture])
+            return hsl16_to_rgb(self.tex_colors[o.texture]), o.texture
         if o.rgb == HIDDEN_OVERLAY:
-            return None
-        return rgb24(o.rgb)
+            return None, -1
+        return rgb24(o.rgb), -1
+
+    def _overlay_color(self, oid):
+        return self._overlay(oid)[0]
 
     def is_bridge(self, wx, wy):
         """OSRS bridge flag: settings[1] & 0x2 on a tile shifts every plane >= 1 of that
@@ -173,14 +177,14 @@ class Scene:
         corners = [(wx, wy), (wx + 1, wy), (wx + 1, wy + 1), (wx, wy + 1)]
         pos = [(cx * 128, self.height(z, cx, cy), cy * 128) for cx, cy in corners]
         under = [blend.get(c) or blend.get((wx, wy)) for c in corners] if u else None
-        over = self._overlay_color(o) if o else None
+        over, otex = self._overlay(o) if o else (None, -1)
         path = self._tile("path", z, wx, wy)
         rot = self._tile("rot", z, wx, wy)
         tris = ((0, 1, 2), (0, 2, 3))
         if over is None or path == 0:
             if over is not None:
                 for t in tris:
-                    out.add_tri([pos[i] for i in t], [over] * 3)
+                    out.add_tri([pos[i] for i in t], [over] * 3, otex)
             elif under:
                 for t in tris:
                     out.add_tri([pos[i] for i in t], [under[i] for i in t])
@@ -191,7 +195,7 @@ class Scene:
         tri_over = ((a, (a + 1) & 3, (a + 2) & 3),)
         tri_under = ((a, (a + 2) & 3, (a + 3) & 3),)
         for t in tri_over:
-            out.add_tri([pos[i] for i in t], [over] * 3)
+            out.add_tri([pos[i] for i in t], [over] * 3, otex)
         if under:
             for t in tri_under:
                 out.add_tri([pos[i] for i in t], [under[i] for i in t])
@@ -324,10 +328,12 @@ class TriSoup:
     def __init__(self):
         self.pos = []
         self.col = []
+        self.tex = []
 
-    def add_tri(self, verts, cols):
+    def add_tri(self, verts, cols, tex=-1):
         self.pos.extend(verts)
         self.col.extend(cols)
+        self.tex.extend([tex] * 3)
 
     def __len__(self):
         return len(self.pos) // 3

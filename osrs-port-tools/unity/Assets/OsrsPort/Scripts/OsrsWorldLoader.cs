@@ -46,6 +46,9 @@ namespace OsrsPort
         private Task<SquareBuild> building;
         private (int, int) buildingKey;
         private Task loadTask;
+        private bool texturesBound;
+        private Texture2DArray texArray;
+        private Texture2D scrollTex;
         private string status = "Loading world...";
         private int viewLevel;
         private bool roofed;
@@ -97,9 +100,9 @@ namespace OsrsPort
         {
             public int rx, ry;
             // One entry per plane (0-3).
-            public float[][] terrainPos; public Color32[][] terrainCol;
-            public float[][] solidPos; public Color32[][] solidCol;
-            public float[][] decorPos; public Color32[][] decorCol;
+            public float[][] terrainPos; public Color32[][] terrainCol; public float[][] terrainUv;
+            public float[][] solidPos; public Color32[][] solidCol; public float[][] solidUv;
+            public float[][] decorPos; public Color32[][] decorCol; public float[][] decorUv;
             public float[][] heights;  // 65x65 corner heights per plane, NaN where the plane has no ground
             public byte[][] tileFlags; // 64x64 per plane: 1 = ground tile, 2 = anything (ground or object)
             public List<Placement> placements;
@@ -169,6 +172,7 @@ namespace OsrsPort
                 return;
             }
             if (!loadTask.IsCompleted) return;
+            if (!texturesBound) { BindTextures(); texturesBound = true; }
 
             UpdatePlaneState();
             Vector3 focus = player != null ? player.position : new Vector3(spawnTile.x, 0f, spawnTile.y);
@@ -271,15 +275,16 @@ namespace OsrsPort
         {
             var d = world.ReadSquare(rx, ry);
             if (d == null) return null;
-            if (d[0] != 'S' || d[1] != 'Q' || d[2] != '2')
-                throw new InvalidDataException("bad square blob (expected SQ2 per-plane terrain; re-run export_world.py)");
+            bool sq3 = d[2] == '3';
+            if (d[0] != 'S' || d[1] != 'Q' || (!sq3 && d[2] != '2'))
+                throw new InvalidDataException("bad square blob (expected SQ2 or SQ3 per-plane terrain; re-run export_world.py)");
             int p = 11;
             var build = new SquareBuild
             {
                 rx = rx, ry = ry, dynamics = new List<DynamicSpec>(),
-                terrainPos = new float[Planes][], terrainCol = new Color32[Planes][],
-                solidPos = new float[Planes][], solidCol = new Color32[Planes][],
-                decorPos = new float[Planes][], decorCol = new Color32[Planes][],
+                terrainPos = new float[Planes][], terrainCol = new Color32[Planes][], terrainUv = new float[Planes][],
+                solidPos = new float[Planes][], solidCol = new Color32[Planes][], solidUv = new float[Planes][],
+                decorPos = new float[Planes][], decorCol = new Color32[Planes][], decorUv = new float[Planes][],
                 heights = new float[Planes][], tileFlags = new byte[Planes][],
             };
             float ox = rx * 64f, oz = ry * 64f;
@@ -299,22 +304,46 @@ namespace OsrsPort
                     if (cx >= 0 && cx <= 64 && cz >= 0 && cz <= 64) hgt[cx * 65 + cz] = y;
                     p += 6;
                 }
-                for (int i = 0; i < nv; i++) { tcol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255); p += 3; }
+                var texOf = sq3 ? new byte[nv] : null;
+                int stride = sq3 ? 4 : 3;
+                for (int i = 0; i < nv; i++)
+                {
+                    tcol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255);
+                    if (sq3) texOf[i] = d[p + 3];
+                    p += stride;
+                }
                 for (int i = 0; i < nv; i++)
                 {
                     int cx = Mathf.RoundToInt(tpos[i * 3] - ox), cz = Mathf.RoundToInt(tpos[i * 3 + 2] - oz);
                     float f = TerrainLight(hgt, cx, cz, tpos[i * 3 + 1]);
-                    var tc = tcol[i];
-                    tcol[i] = new Color32((byte)Mathf.Min(255, tc.r * f), (byte)Mathf.Min(255, tc.g * f), (byte)Mathf.Min(255, tc.b * f), 255);
+                    if (texOf != null && texOf[i] != 0)
+                    {
+                        byte g = (byte)Mathf.Clamp(Mathf.RoundToInt(f * 255f), 0, 255);
+                        tcol[i] = new Color32(g, g, g, 255);
+                    }
+                    else
+                    {
+                        var tc = tcol[i];
+                        tcol[i] = new Color32((byte)Mathf.Min(255, tc.r * f), (byte)Mathf.Min(255, tc.g * f), (byte)Mathf.Min(255, tc.b * f), 255);
+                    }
                 }
+                var tuv = new float[nv * 3];
                 for (int t = 0; t + 2 < nv; t += 3)
                 {
                     float mx = (tpos[t * 3] + tpos[t * 3 + 3] + tpos[t * 3 + 6]) / 3f - ox;
                     float mz = (tpos[t * 3 + 2] + tpos[t * 3 + 5] + tpos[t * 3 + 8]) / 3f - oz;
-                    int tx = Mathf.Clamp(Mathf.FloorToInt(mx), 0, 63), tz = Mathf.Clamp(Mathf.FloorToInt(mz), 0, 63);
+                    int tileX = Mathf.FloorToInt(mx), tileZ = Mathf.FloorToInt(mz);
+                    int tx = Mathf.Clamp(tileX, 0, 63), tz = Mathf.Clamp(tileZ, 0, 63);
                     flags[tx * 64 + tz] |= 3;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int i = t + k;
+                        tuv[i * 3] = (tpos[i * 3] - ox) - tileX;
+                        tuv[i * 3 + 1] = (tpos[i * 3 + 2] - oz) - tileZ;
+                        tuv[i * 3 + 2] = texOf != null ? texOf[i] : 0;
+                    }
                 }
-                build.terrainPos[lv] = tpos; build.terrainCol[lv] = tcol;
+                build.terrainPos[lv] = tpos; build.terrainCol[lv] = tcol; build.terrainUv[lv] = tuv;
                 build.heights[lv] = hgt; build.tileFlags[lv] = flags;
             }
 
@@ -340,7 +369,9 @@ namespace OsrsPort
             for (int lv = 0; lv < Planes; lv++)
             {
                 build.solidPos[lv] = new float[solidFaces[lv] * 9]; build.solidCol[lv] = new Color32[solidFaces[lv] * 3];
+                build.solidUv[lv] = new float[solidFaces[lv] * 9];
                 build.decorPos[lv] = new float[decorFaces[lv] * 9]; build.decorCol[lv] = new Color32[decorFaces[lv] * 3];
+                build.decorUv[lv] = new float[decorFaces[lv] * 9];
             }
             var so = new int[Planes];
             var de = new int[Planes];
@@ -402,6 +433,11 @@ namespace OsrsPort
                     dst[(o + k) * 3 + 2] = pz + (-s * x + c * z) / 128f;
                 }
                 OsrsLight.ShadeLoc(vm, ang, dcol, o);
+                if (vm.uv != null)
+                {
+                    float[] duv = decor ? build.decorUv[lvi] : build.solidUv[lvi];
+                    Array.Copy(vm.uv, 0, duv, o * 3, n * 3);
+                }
                 if (decor) de[lvi] += n; else so[lvi] += n;
             }
             return build;
@@ -417,9 +453,9 @@ namespace OsrsPort
                 var plane = new GameObject($"plane_{lv}");
                 plane.transform.SetParent(go.transform, false);
                 sq.planes[lv] = plane;
-                AddMesh(plane, "terrain", b.terrainPos[lv], b.terrainCol[lv], true, out _, out _);
-                AddMesh(plane, "objects", b.solidPos[lv], b.solidCol[lv], true, out sq.solidMesh[lv], out sq.solidCollider[lv]);
-                AddMesh(plane, "decor", b.decorPos[lv], b.decorCol[lv], false, out sq.decorMesh[lv], out _);
+                AddMesh(plane, "terrain", b.terrainPos[lv], b.terrainCol[lv], b.terrainUv[lv], true, out _, out _);
+                AddMesh(plane, "objects", b.solidPos[lv], b.solidCol[lv], b.solidUv[lv], true, out sq.solidMesh[lv], out sq.solidCollider[lv]);
+                AddMesh(plane, "decor", b.decorPos[lv], b.decorCol[lv], b.decorUv[lv], false, out sq.decorMesh[lv], out _);
             }
             foreach (var spec in b.dynamics)
                 AddDynamic(sq, spec);
@@ -503,7 +539,32 @@ namespace OsrsPort
             }
         }
 
-        private void AddMesh(GameObject parent, string name, float[] pos, Color32[] col, bool collide, out Mesh meshOut, out MeshCollider colliderOut)
+        private void BindTextures()
+        {
+            int n = world.textureCount;
+            int size = world.textureSize;
+            if (n <= 0 || size <= 0 || world.texturePixels == null || world.textureScroll == null) return;
+            texArray = new Texture2DArray(size, size, n, TextureFormat.RGBA32, false, false);
+            int stride = size * size * 4;
+            for (int i = 0; i < n; i++)
+                texArray.SetPixelData(world.texturePixels, 0, i, i * stride);
+            texArray.wrapMode = TextureWrapMode.Repeat;
+            texArray.filterMode = FilterMode.Point;
+            texArray.Apply(false, true);
+            var scroll = new float[256 * 2];
+            Array.Copy(world.textureScroll, scroll, Math.Min(world.textureScroll.Length, scroll.Length));
+            scrollTex = new Texture2D(256, 1, TextureFormat.RGFloat, false, true);
+            scrollTex.wrapMode = TextureWrapMode.Clamp;
+            scrollTex.filterMode = FilterMode.Point;
+            scrollTex.SetPixelData(scroll, 0);
+            scrollTex.Apply(false, true);
+            material.SetTexture("_TexArr", texArray);
+            material.SetTexture("_ScrollTex", scrollTex);
+            material.SetFloat("_HasTex", 1f);
+            Debug.Log($"OsrsPort: {n} textures, {size}px");
+        }
+
+        private void AddMesh(GameObject parent, string name, float[] pos, Color32[] col, float[] uv, bool collide, out Mesh meshOut, out MeshCollider colliderOut)
         {
             meshOut = null; colliderOut = null;
             int nv = col.Length;
@@ -523,6 +584,12 @@ namespace OsrsPort
             mesh.SetVertices(verts);
             mesh.SetNormals(normals);
             mesh.SetColors(col);
+            if (uv != null && uv.Length == nv * 3)
+            {
+                var uvs = new Vector3[nv];
+                for (int i = 0; i < nv; i++) uvs[i] = new Vector3(uv[i * 3], uv[i * 3 + 1], uv[i * 3 + 2]);
+                mesh.SetUVs(0, uvs);
+            }
             mesh.SetTriangles(indices, 0, false);
             mesh.RecalculateBounds();
             var go = new GameObject(name);
@@ -561,6 +628,12 @@ namespace OsrsPort
                 var lit = new Color32[nv];
                 OsrsLight.ShadeLoc(vm, yaw * (2f * Mathf.PI / 2048f), lit, 0);
                 mesh.SetColors(lit);
+                if (vm.uv != null)
+                {
+                    var uvs = new Vector3[nv];
+                    for (int i = 0; i < nv; i++) uvs[i] = new Vector3(vm.uv[i * 3], vm.uv[i * 3 + 1], vm.uv[i * 3 + 2]);
+                    mesh.SetUVs(0, uvs);
+                }
                 mesh.SetTriangles(indices, 0, false);
                 mesh.RecalculateBounds();
             }
@@ -815,6 +888,7 @@ namespace OsrsPort
             }
             var pos = new List<float>();
             var col = new List<Color32>();
+            var slice = new List<float>();
             foreach (var room in houseRooms)
             {
                 var src = TemplateSquare(room.srcX >> 6, room.srcZ >> 6);
@@ -822,6 +896,7 @@ namespace OsrsPort
                 // The engine copies template plane 0 into the house (RegionTemplate level 0).
                 var tp = src.terrainPos[0];
                 var tc = src.terrainCol[0];
+                var tu = src.terrainUv[0];
                 int nv = tc.Length;
                 for (int t = 0; t + 2 < nv; t += 3)
                 {
@@ -834,10 +909,26 @@ namespace OsrsPort
                         var (u, w) = RotateChunkPoint(tp[vi * 3] - room.srcX, tp[vi * 3 + 2] - room.srcZ, room.rot);
                         pos.Add(room.dstX + u); pos.Add(tp[vi * 3 + 1]); pos.Add(room.dstZ + w);
                         col.Add(tc[vi]);
+                        slice.Add(tu != null ? tu[vi * 3 + 2] : 0f);
                     }
                 }
             }
-            AddMesh(house.planes[0], "terrain", pos.ToArray(), col.ToArray(), true, out _, out _);
+            var huv = new float[col.Count * 3];
+            var hp = pos.ToArray();
+            for (int t = 0; t + 2 < col.Count; t += 3)
+            {
+                float ax = (hp[t * 3] + hp[(t + 1) * 3] + hp[(t + 2) * 3]) / 3f;
+                float az = (hp[t * 3 + 2] + hp[(t + 1) * 3 + 2] + hp[(t + 2) * 3 + 2]) / 3f;
+                int tx = Mathf.FloorToInt(ax), tz = Mathf.FloorToInt(az);
+                for (int k = 0; k < 3; k++)
+                {
+                    int i = t + k;
+                    huv[i * 3] = hp[i * 3] - tx;
+                    huv[i * 3 + 1] = hp[i * 3 + 2] - tz;
+                    huv[i * 3 + 2] = slice[i];
+                }
+            }
+            AddMesh(house.planes[0], "terrain", hp, col.ToArray(), huv, true, out _, out _);
         }
 
         /// <summary>`HLOCS id|x|z|level|shape|rot;...`: every loc in the house, already placed by the server.</summary>

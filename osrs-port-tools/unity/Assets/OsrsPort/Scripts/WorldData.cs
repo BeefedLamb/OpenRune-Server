@@ -94,12 +94,20 @@ namespace OsrsPort
             /// <summary>Per corner: averaged OSRS vertex normal (length ~256) and the unlit colour, for re-lighting at a yaw.</summary>
             public float[] normals;
             public ushort[] hsls;
+            /// <summary>Per corner: texture u, v, and slice (texture id + 1, 0 = flat colour).</summary>
+            public float[] uv;
+            /// <summary>Per face: texture id + 1, or 0 when the face keeps its HSL colour.</summary>
+            public short[] faceTex;
         }
 
         public readonly Dictionary<(int, int), SquareEntry> squares = new Dictionary<(int, int), SquareEntry>();
         public readonly Dictionary<int, Model> models = new Dictionary<int, Model>();
         public Variant[] variants = Array.Empty<Variant>();
         public readonly Dictionary<int, ushort> textureColors = new Dictionary<int, ushort>();
+        public readonly Dictionary<int, short[]> modelUvs = new Dictionary<int, short[]>();
+        public int textureCount, textureSize;
+        public byte[] texturePixels;
+        public float[] textureScroll = Array.Empty<float>();
         public readonly Dictionary<int, LocDef> locs = new Dictionary<int, LocDef>();
         public readonly Dictionary<(int, int, bool), int> variantIndex = new Dictionary<(int, int, bool), int>();
         public readonly Dictionary<int, NpcDef> npcs = new Dictionary<int, NpcDef>();
@@ -132,6 +140,8 @@ namespace OsrsPort
                 LoadModels(Path.Combine(root, "npc_models.bin.gz"));
             if (File.Exists(Path.Combine(root, "player_models.bin.gz")))
                 LoadModels(Path.Combine(root, "player_models.bin.gz"));
+            LoadModelUvs();
+            LoadTextures();
             for (int i = 0; i < variants.Length; i++)
                 variantIndex[(variants[i].locId, variants[i].modelType, variants[i].mirror)] = i;
             LoadLocs();
@@ -335,6 +345,56 @@ namespace OsrsPort
             }
         }
 
+        private void LoadModelUvs()
+        {
+            string path = Path.Combine(root, "model_uvs.bin.gz");
+            if (!File.Exists(path)) return;
+            var d = ReadGzip(path);
+            if (d.Length < 7 || d[0] != (byte)'U' || d[1] != (byte)'V' || d[2] != (byte)'1') return;
+            int p = 3;
+            int count = BitConverter.ToInt32(d, p); p += 4;
+            for (int i = 0; i < count; i++)
+            {
+                int id = BitConverter.ToInt32(d, p);
+                int nf = BitConverter.ToInt32(d, p + 4);
+                p += 8;
+                int bytes = nf * 12;
+                if (p + bytes > d.Length) break;
+                if (models.TryGetValue(id, out var m) && m.colors.Length == nf)
+                {
+                    var uv = new short[nf * 6];
+                    Buffer.BlockCopy(d, p, uv, 0, bytes);
+                    modelUvs[id] = uv;
+                }
+                p += bytes;
+            }
+        }
+
+        private void LoadTextures()
+        {
+            string path = Path.Combine(root, "textures.bin");
+            if (!File.Exists(path)) return;
+            var d = File.ReadAllBytes(path);
+            if (d.Length < 8 || d[0] != (byte)'T' || d[1] != (byte)'E' || d[2] != (byte)'X' || d[3] != (byte)'1') return;
+            textureCount = BitConverter.ToUInt16(d, 4);
+            textureSize = BitConverter.ToUInt16(d, 6);
+            int pixels = textureSize * textureSize * 4;
+            texturePixels = new byte[textureCount * pixels];
+            textureScroll = new float[textureCount * 2];
+            int p = 8;
+            for (int i = 0; i < textureCount; i++)
+            {
+                bool present = d[p] != 0;
+                textureScroll[i * 2] = BitConverter.ToInt16(d, p + 1) / 256f;
+                textureScroll[i * 2 + 1] = BitConverter.ToInt16(d, p + 3) / 256f;
+                p += 5;
+                if (!present) continue;
+                if (p + pixels > d.Length) break;
+                Buffer.BlockCopy(d, p, texturePixels, i * pixels, pixels);
+                p += pixels;
+            }
+        }
+
         public byte[] ReadSquare(int rx, int ry)
         {
             if (!squares.TryGetValue((rx, ry), out var e))
@@ -391,7 +451,13 @@ namespace OsrsPort
             foreach (var mid in modelIds)
                 if (models.TryGetValue(mid, out var m)) faces += m.colors.Length;
             var mesh = new VariantMesh { positions = new float[faces * 9], colors = new Color32[faces * 3], faceCount = faces };
-            if (!actorLight) { mesh.normals = new float[faces * 9]; mesh.hsls = new ushort[faces * 3]; }
+            if (!actorLight)
+            {
+                mesh.normals = new float[faces * 9];
+                mesh.hsls = new ushort[faces * 3];
+                mesh.uv = new float[faces * 9];
+                mesh.faceTex = new short[faces];
+            }
             int f = 0;
             foreach (var mid in modelIds)
             {
@@ -409,7 +475,27 @@ namespace OsrsPort
                     if (tex != -1)
                         for (int k = 0; k < retextureFrom.Length; k++)
                             if (tex == retextureFrom[k]) { tex = retextureTo[k]; break; }
-                    ushort baseHsl = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? th : hsl;
+                    bool textured = tex != -1 && !actorLight;
+                    ushort baseHsl = hsl;
+                    if (!textured && tex != -1 && textureColors.TryGetValue(tex, out var th)) baseHsl = th;
+                    if (textured)
+                    {
+                        float uA = 0f, vA = 0f, uC = 0f, vC = 1f, uB = 1f, vB = 0f;
+                        if (modelUvs.TryGetValue(mid, out var src) && i * 6 + 5 < src.Length)
+                        {
+                            uA = src[i * 6] / 256f; vA = src[i * 6 + 1] / 256f;
+                            uC = src[i * 6 + 2] / 256f; vC = src[i * 6 + 3] / 256f;
+                            uB = src[i * 6 + 4] / 256f; vB = src[i * 6 + 5] / 256f;
+                        }
+                        float u1 = mirror ? uB : uC, v1 = mirror ? vB : vC;
+                        float u2 = mirror ? uC : uB, v2 = mirror ? vC : vB;
+                        int uo = f * 9;
+                        float slice = tex + 1;
+                        mesh.uv[uo] = uA; mesh.uv[uo + 1] = vA; mesh.uv[uo + 2] = slice;
+                        mesh.uv[uo + 3] = u1; mesh.uv[uo + 4] = v1; mesh.uv[uo + 5] = slice;
+                        mesh.uv[uo + 6] = u2; mesh.uv[uo + 7] = v2; mesh.uv[uo + 8] = slice;
+                        mesh.faceTex[f] = (short)(tex + 1);
+                    }
                     int o = f * 9;
                     WriteVertex(mesh.positions, o, m.positions, a, mirror, sx, sy, sz);
                     WriteVertex(mesh.positions, o + 3, m.positions, b, mirror, sx, sy, sz);
@@ -419,7 +505,9 @@ namespace OsrsPort
                     {
                         int vi = k == 0 ? ca : k == 1 ? cb : cc;
                         float nx = vn[vi * 3], ny = vn[vi * 3 + 1], nz = mirror ? -vn[vi * 3 + 2] : vn[vi * 3 + 2];
-                        mesh.colors[f * 3 + k] = actorLight ? OsrsLight.Actor(baseHsl, nx, ny, nz) : OsrsLight.Loc(baseHsl, nx, ny, nz, 0f);
+                        mesh.colors[f * 3 + k] = textured
+                            ? OsrsLight.LocFactor(nx, ny, nz, 0f)
+                            : actorLight ? OsrsLight.Actor(baseHsl, nx, ny, nz) : OsrsLight.Loc(baseHsl, nx, ny, nz, 0f);
                         if (!actorLight)
                         {
                             mesh.normals[o + k * 3] = nx; mesh.normals[o + k * 3 + 1] = ny; mesh.normals[o + k * 3 + 2] = nz;
@@ -702,6 +790,22 @@ namespace OsrsPort
             return Shade(hsl, Ambient + (ActorLx * nx + ActorLy * ny + ActorLz * nz) / ActorK);
         }
 
+        /// <summary>Greyscale light factor for a textured face: the shader multiplies the texture by it.</summary>
+        public static Color32 LocFactor(float nx, float ny, float nz, float yaw)
+        {
+            float s = Mathf.Sin(yaw), c = Mathf.Cos(yaw);
+            float lx = c * LocLx - s * LocLz, lz = s * LocLx + c * LocLz;
+            return Factor(Ambient + (lx * nx + LocLy * ny + lz * nz) / LocK);
+        }
+
+        public static Color32 Factor(float light)
+        {
+            int l = (int)light;
+            if (l < 2) l = 2; else if (l > 126) l = 126;
+            byte g = (byte)Math.Round(Math.Pow(l / 128.0, 0.7) * 255.0);
+            return new Color32(g, g, g, 255);
+        }
+
         public static void ShadeLoc(WorldData.VariantMesh vm, float yaw, Color32[] dst, int offset)
         {
             float s = Mathf.Sin(yaw), c = Mathf.Cos(yaw);
@@ -711,7 +815,8 @@ namespace OsrsPort
             for (int k = 0; k < n; k++)
             {
                 float d = lx * vm.normals[k * 3] + LocLy * vm.normals[k * 3 + 1] + lz * vm.normals[k * 3 + 2];
-                dst[offset + k] = Shade(vm.hsls[k], Ambient + d / LocK);
+                bool tex = vm.faceTex != null && vm.faceTex[k / 3] != 0;
+                dst[offset + k] = tex ? Factor(Ambient + d / LocK) : Shade(vm.hsls[k], Ambient + d / LocK);
             }
         }
 
