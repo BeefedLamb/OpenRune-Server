@@ -20,6 +20,9 @@ namespace OsrsPort
         private const int MaxVoices = 16;
 
         public static OsrsSound Instance { get; private set; }
+        /// <summary>How many sounds have been started, and the synth id of the latest one.</summary>
+        public int Plays { get; private set; }
+        public int LastSynth { get; private set; }
 
         [Range(0f, 1f)] public float volume = 0.6f;
 
@@ -55,6 +58,8 @@ namespace OsrsPort
         /// <summary>Plays a sound at a world position that fades out over <paramref name="rangeTiles"/>.</summary>
         public void PlayAt(int synth, int loops, int delayCycles, Vector3? position, float rangeTiles)
         {
+            Plays++;
+            LastSynth = synth;
             var clip = Clip(synth);
             if (clip == null) return;
             EnsureListener();

@@ -61,6 +61,14 @@ namespace OsrsPort
             Active = false;
         }
 
+        /// <summary>Login and confirm the default look. Used by the automated play-mode check only.</summary>
+        public void AutoSubmitForVerify()
+        {
+            if (stage == Stage.EnterName) SubmitName();
+            else if (stage == Stage.Design && look != null && link.SendAppearance((int[])look.Clone()))
+                SetStage(Stage.Submitting);
+        }
+
         private void Update()
         {
             if (stage == Stage.Done) return;

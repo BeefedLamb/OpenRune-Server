@@ -251,3 +251,30 @@ contentGroup = "content.opened_single_door"
 [object.params]
 "param.next_loc_stage" = "loc.fai_barbarian_poordoor"
 "param.closesound" = "synth.door_close"
+
+[[object]]
+id = "loc.hundred_lumbridge_door"
+inherit = "loc.hundred_lumbridge_door"
+contentGroup = "content.closed_single_door"
+
+[object.params]
+"param.next_loc_stage" = "loc.elfdooropen"
+"param.opensound" = "synth.door_open"
+
+[[object]]
+id = "loc.hundred_lumbridge_doubledoorl"
+inherit = "loc.hundred_lumbridge_doubledoorl"
+contentGroup = "content.closed_left_door"
+
+[object.params]
+"param.next_loc_stage" = "loc.opencastledoubledoorl"
+"param.opensound" = "synth.door_open"
+
+[[object]]
+id = "loc.hundred_lumbridge_doubledoorr"
+inherit = "loc.hundred_lumbridge_doubledoorr"
+contentGroup = "content.closed_right_door"
+
+[object.params]
+"param.next_loc_stage" = "loc.opencastledoubledoorr"
+"param.opensound" = "synth.door_open"
