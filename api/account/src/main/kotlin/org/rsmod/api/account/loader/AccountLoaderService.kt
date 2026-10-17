@@ -197,8 +197,14 @@ constructor(
         val startedAt = System.nanoTime()
         val worldType = resolveWorldType(request)
         val response =
-            database.withSchemaTransaction(worldType.key) { connection ->
-                connection.handleRequest(request, worldType)
+            try {
+                database.withSchemaTransaction(worldType.key) { connection ->
+                    connection.handleRequest(request, worldType)
+                }
+            } catch (e: AccountCreationException) {
+                // Thrown out of the transaction so it rolls back: no half-created account rows.
+                logger.error(e.cause) { "Account creation failed for: '${request.accountName}'" }
+                AccountLoadResponse.Err.Exception(e.cause as Exception)
             }
         val elapsedMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt)
         if (serverConfig.loginTimingLogs && elapsedMs >= ACCOUNT_DB_TIMING_INFO_MS) {
@@ -301,8 +307,12 @@ constructor(
                 worldType,
             )
         } catch (e: Exception) {
-            AccountLoadResponse.Err.Exception(e)
+            // Must escape withSchemaTransaction (not be returned) so the partial inserts roll back.
+            throw AccountCreationException(e)
         }
+
+    /** Marks a failed account creation; caught outside the transaction after rollback. */
+    private class AccountCreationException(cause: Exception) : RuntimeException(cause)
 
     private fun DatabaseConnection.createMetadataList(
         accountName: String,

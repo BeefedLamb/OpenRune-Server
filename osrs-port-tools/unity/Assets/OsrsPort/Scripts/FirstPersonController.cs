@@ -7,7 +7,7 @@ namespace OsrsPort
 {
     /// <summary>
     /// First-person WASD controller. Mouse to look, Shift to run, Space to jump,
-    /// N to toggle noclip (fly through walls), V to toggle third person, Left Alt to dodge roll,
+    /// N to toggle noclip (fly through walls), V or F5 to toggle third person, Left Alt to dodge roll,
     /// Esc to free the cursor, click to recapture.
     /// </summary>
     [RequireComponent(typeof(CharacterController))]
@@ -26,7 +26,7 @@ namespace OsrsPort
         public float dodgeDistance = 2.5f;
         public float dodgeDuration = 0.35f;
         public float dodgeCooldown = 1.2f;
-        /// <summary>NPC id whose model stands in for the player when seen from behind (3106 = Man).</summary>
+        /// <summary>NPC id whose model stands in for the player until the server sends our real body (PLOOK).</summary>
         public int avatarNpcId = 3106;
 
         public bool ThirdPerson { get; private set; }
@@ -35,6 +35,8 @@ namespace OsrsPort
         private Vector3 dodgeDir;
         private Transform cameraBoom;
         private GameObject avatar;
+        private string avatarLookKey;
+        private int[] avatarLookRef;
 
         private CharacterController body;
         private Transform cameraPivot;
@@ -75,9 +77,10 @@ namespace OsrsPort
                 out bool toggleNoclip, out bool escape, out bool click, out bool toggleView, out bool dodge);
 
             if (toggleView) SetThirdPerson(!ThirdPerson);
+            if (ThirdPerson) RefreshAvatar();
             UpdateCameraBoom();
             if (escape) LockCursor(false);
-            if (click && Cursor.lockState != CursorLockMode.Locked) LockCursor(true);
+            if (click && Cursor.lockState != CursorLockMode.Locked && !OsrsInteraction.CursorMode) LockCursor(true);
             if (toggleNoclip)
             {
                 noclip = !noclip;
@@ -110,6 +113,9 @@ namespace OsrsPort
 
             Vector3 planar = (transform.forward * move.y + transform.right * move.x);
             if (planar.sqrMagnitude > 1f) planar.Normalize();
+            // Stunned (failed pickpocket) or bound: no walking, jumping or dodging until the server says FROZEN 0.
+            var srv = OsrsServerLink.Instance;
+            if (srv != null && srv.Frozen) { planar = Vector3.zero; jump = false; dodge = false; }
             if (dodge && !Dodging && Time.time - dodgeStart > dodgeCooldown && body.isGrounded)
             {
                 dodgeStart = Time.time;
@@ -153,8 +159,22 @@ namespace OsrsPort
         public void SetThirdPerson(bool on)
         {
             ThirdPerson = on;
-            if (on && avatar == null) avatar = BuildAvatar();
+            if (on) RefreshAvatar();
             if (avatar != null) avatar.SetActive(on);
+        }
+
+        /// <summary>Rebuilds the avatar when our look (identkits, colours, worn items) changed.</summary>
+        private void RefreshAvatar()
+        {
+            var look = OsrsServerLink.Instance != null ? OsrsServerLink.Instance.SelfLook : null;
+            if (avatar != null && !string.IsNullOrEmpty(avatarLookKey) && ReferenceEquals(look, avatarLookRef)) return;
+            avatarLookRef = look;
+            string key = look != null && OsrsPlayerModels.GetMesh(look) != null ? OsrsPlayerModels.Key(look) : "";
+            if (avatar != null && key == avatarLookKey) return;
+            if (avatar != null) Destroy(avatar);
+            avatar = BuildAvatar();
+            avatarLookKey = key;
+            if (avatar != null) avatar.SetActive(ThirdPerson);
         }
 
         /// <summary>Pulls the camera back behind the shoulder in third person, stopping short of walls.</summary>
@@ -175,22 +195,53 @@ namespace OsrsPort
         {
             var loader = OsrsWorldLoader.Instance;
             if (loader == null || loader.Data == null) return null;
-            var vm = loader.Data.GetNpcMesh(avatarNpcId);
-            if (vm.faceCount == 0) return null;
-            int nv = vm.faceCount * 3;
-            var verts = new Vector3[nv]; var normals = new Vector3[nv]; var idx = new int[nv];
-            for (int i = 0; i < nv; i++) { verts[i] = new Vector3(vm.positions[i * 3], vm.positions[i * 3 + 1], vm.positions[i * 3 + 2]) / 128f; idx[i] = i; }
-            for (int i = 0; i < nv; i += 3) { var n = Vector3.Cross(verts[i + 1] - verts[i], verts[i + 2] - verts[i]).normalized; normals[i] = normals[i + 1] = normals[i + 2] = n; }
-            var mesh = new Mesh { name = "player_avatar", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-            mesh.SetVertices(verts); mesh.SetNormals(normals); mesh.SetColors(vm.colors); mesh.SetTriangles(idx, 0, false); mesh.RecalculateBounds();
+            // Our real OSRS body when the server sent it (PLOOK me); otherwise the stand-in NPC.
+            var look = OsrsServerLink.Instance != null ? OsrsServerLink.Instance.SelfLook : null;
+            var mesh = OsrsPlayerModels.GetMesh(look);
+            if (mesh == null)
+            {
+                var vm = loader.Data.GetNpcMesh(avatarNpcId);
+                if (vm.faceCount == 0) return null;
+                mesh = OsrsPlayerModels.ToMesh(vm, "player_avatar");
+            }
             var go = new GameObject("Avatar") { layer = OsrsNpcManager.PlayerLayer };
             go.transform.SetParent(transform, false);
+            var animData = loader.Data.anim;
+            if (animData != null && animData.Loaded)
+            {
+                // Animated body: stand / walk / run from our BAS, actions from the server's ANIM.
+                bool real = OsrsPlayerModels.GetMesh(look) != null;
+                var ad = real ? loader.Data.BuildPlayerAnimData(look) : loader.Data.BuildNpcAnimData(avatarNpcId);
+                if (ad != null)
+                {
+                    var an = go.AddComponent<OsrsAnimator>();
+                    mesh = an.Init(animData, ad, "player_avatar_anim");
+                    if (!real && loader.Data.npcs.TryGetValue(avatarNpcId, out var stand))
+                    { an.standSeq = stand.standSeq; an.walkSeq = stand.walkSeq; an.runSeq = stand.runSeq; }
+                    OsrsAnimator.Local = an;
+                }
+            }
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
-            var npcs = FindFirstObjectByType<OsrsNpcManager>();
+            var npcs = FindAnyObjectByType<OsrsNpcManager>();
             r.sharedMaterial = npcs != null ? npcs.material : new Material(Shader.Find("OsrsPort/VertexColorLit"));
             r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             return go;
+        }
+
+        /// <summary>Drives the avatar's base animation from our actual movement and the server's BAS.</summary>
+        private void LateUpdate()
+        {
+            if (avatar == null) return;
+            var an = avatar.GetComponent<OsrsAnimator>();
+            if (an == null) return;
+            var v = body.enabled ? body.velocity : Vector3.zero;
+            v.y = 0f;
+            float speed = v.magnitude;
+            an.moving = speed > 0.3f;
+            an.running = speed > (walkSpeed + runSpeed) * 0.5f;
+            var bas = OsrsServerLink.Instance != null ? OsrsServerLink.Instance.SelfBas : null;
+            if (bas != null) OsrsNpcManager.SetBas(an, bas);
         }
 
         private static void LockCursor(bool locked)
@@ -222,7 +273,7 @@ namespace OsrsPort
             toggleNoclip = kb != null && kb.nKey.wasPressedThisFrame;
             escape = kb != null && kb.escapeKey.wasPressedThisFrame;
             click = mouse != null && mouse.leftButton.wasPressedThisFrame;
-            toggleView = kb != null && kb.vKey.wasPressedThisFrame;
+            toggleView = kb != null && (kb.vKey.wasPressedThisFrame || kb.f5Key.wasPressedThisFrame);
             dodge = kb != null && kb.leftAltKey.wasPressedThisFrame;
             if (mouse != null) look = mouse.delta.ReadValue();
 #else
@@ -235,7 +286,7 @@ namespace OsrsPort
             toggleNoclip = Input.GetKeyDown(KeyCode.N);
             escape = Input.GetKeyDown(KeyCode.Escape);
             click = Input.GetMouseButtonDown(0);
-            toggleView = Input.GetKeyDown(KeyCode.V);
+            toggleView = Input.GetKeyDown(KeyCode.V) || Input.GetKeyDown(KeyCode.F5);
             dodge = Input.GetKeyDown(KeyCode.LeftAlt);
 #endif
         }

@@ -9,6 +9,9 @@ Writes to <out_dir>/world/:
   index.bin        map square -> pack file, offset, length
   pack_N.bin       concatenated gzip blobs, one per map square (terrain + placements)
 
+Square blob "SQ2": rx, ry (int32), then terrain for planes 0..3 in order, each as
+uint32 vertex count + int16 xyz per vertex + rgb per vertex, then the placements.
+
 All integers little-endian. Unity coordinates: x = east, y = up, z = north, world position
 in tiles equals the OSRS tile coordinate (no origin shift).
 """
@@ -97,6 +100,9 @@ class WorldExporter:
             h = (s.height(level, xa, ya) + s.height(level, xb, ya)
                  + s.height(level, xa, yb) + s.height(level, xb, yb)) >> 2
             cx, cy = lx * 128 + sx * 64, ly * 128 + sy * 64
+            # Bridge tiles: locs keep their source-plane height (h above) but are placed on
+            # the plane below (OSRS client MapLoader rule), so the deck sits on the walk plane.
+            level = s.display_level(level, x, y)
             decor = 1 if (ltype == 22 or 4 <= ltype <= 8 or d.solid == 0) else 0
             jobs = []
             if ltype == 22 or 12 <= ltype <= 21 or ltype in (0, 1, 3, 9):
@@ -138,11 +144,11 @@ class WorldExporter:
         return out
 
     # ------------------------------------------------------------ terrain
-    def terrain(self, rx, ry):
+    def terrain(self, rx, ry, z):
         s = self.scene
         soup = TriSoup()
         x0, y0 = rx * 64, ry * 64
-        s.build_terrain(x0, y0, x0 + 63, y0 + 63, soup)
+        s.build_terrain(x0, y0, x0 + 63, y0 + 63, soup, (z,))
         verts = bytearray()
         cols = bytearray()
         n = 0
@@ -178,10 +184,13 @@ class WorldExporter:
                 self.ensure_loaded(nx, ny)
         x0, y0 = rx * 64, ry * 64
         s.compute_heights(x0 - 2, y0 - 2, x0 + 66, y0 + 66)
-        n, verts, cols = self.terrain(rx, ry)
         places = self.placements(rx, ry)
-        body = bytearray(b"SQ1" + struct.pack("<ii", rx, ry))
-        body += struct.pack("<I", n) + verts + cols
+        body = bytearray(b"SQ2" + struct.pack("<ii", rx, ry))
+        n = 0
+        for z in range(4):
+            nz, verts, cols = self.terrain(rx, ry, z)
+            body += struct.pack("<I", nz) + verts + cols
+            n += nz
         body += struct.pack("<I", len(places))
         for vid, lx, ly, level, yaw, px, pz, py, decor in places:
             body += struct.pack("<IBBBHhhhB", vid, lx, ly, level, yaw,

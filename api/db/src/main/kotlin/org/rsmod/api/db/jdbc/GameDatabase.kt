@@ -24,6 +24,13 @@ constructor(
 
     private lateinit var connection: Connection
 
+    /**
+     * The single [connection] is shared by several service threads (account loader, saver, db
+     * gateway, game thread). Transactions must not interleave on it: another thread's commit ends
+     * this one early, reverting `SET LOCAL search_path` and splitting multi-statement writes.
+     */
+    private val connectionLock = Any()
+
     public fun connect(connector: GameConnection) {
         check(!::connection.isInitialized) { "Connection already initialized." }
         val config = configProvider.get()
@@ -89,6 +96,10 @@ constructor(
         block: (DatabaseConnection) -> T,
     ): T {
         assertValidConnection()
+        synchronized(connectionLock) { return transactionBlocking(schema, block) }
+    }
+
+    private fun <T> transactionBlocking(schema: String?, block: (DatabaseConnection) -> T): T {
         try {
             val wrapped = DatabaseConnection(connection)
             applySchemaSearchPath(connection, schema)
@@ -149,12 +160,12 @@ constructor(
         assertValidConnection()
         repeat(MAX_ATTEMPTS - 1) {
             try {
-                return block(connection)
+                return synchronized(connectionLock) { block(connection) }
             } catch (_: SQLException) {
                 delay(BACKOFF_MILLIS)
             }
         }
-        return block(connection)
+        return synchronized(connectionLock) { block(connection) }
     }
 
     private fun assertValidConnection() {

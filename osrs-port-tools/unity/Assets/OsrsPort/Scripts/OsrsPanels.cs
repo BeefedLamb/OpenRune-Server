@@ -16,7 +16,8 @@ namespace OsrsPort
         public enum Panel { None, Inventory, Equipment, Skills }
 
         /// <summary>True while a panel owns the mouse; movement and crosshair scripts stand down.</summary>
-        public static bool UiOpen { get; private set; }
+        public static bool UiOpen => panelOpen || OsrsCharacterDesign.Active || OsrsBank.Active || OsrsShop.Active || OsrsSpellbook.Active;
+        private static bool panelOpen;
 
         private Panel panel = Panel.None;
         private OsrsServerLink link;
@@ -35,7 +36,13 @@ namespace OsrsPort
 
         private void Update()
         {
-            if (OsrsInteraction.TextInputActive) return;
+            if (OsrsInteraction.TextInputActive || OsrsCharacterDesign.Active) return;
+            if (OsrsBank.Active || OsrsShop.Active || OsrsSpellbook.Active)
+            {
+                // The bank window owns the mouse and keys; drop any side panel without re-locking the cursor.
+                panel = Panel.None; menuItem = null; panelOpen = false;
+                return;
+            }
             bool i, o, k, esc;
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current;
@@ -56,9 +63,9 @@ namespace OsrsPort
         {
             panel = panel == p ? Panel.None : p;
             menuItem = null;
-            UiOpen = panel != Panel.None;
-            Cursor.lockState = UiOpen ? CursorLockMode.None : CursorLockMode.Locked;
-            Cursor.visible = UiOpen;
+            panelOpen = panel != Panel.None;
+            Cursor.lockState = panelOpen ? CursorLockMode.None : CursorLockMode.Locked;
+            Cursor.visible = panelOpen;
         }
 
         private void OnGUI()
@@ -87,6 +94,7 @@ namespace OsrsPort
             }
             GUI.Label(new Rect(area.x, area.yMax - 24, area.width, 20), "[I] Backpack   [O] Worn   [K] Skills   [Esc] close", smallStyle);
             DrawContextMenu();
+            OsrsItemIcons.DrawHover();
         }
 
         private void DrawInventory(Rect area)
@@ -100,10 +108,17 @@ namespace OsrsPort
             {
                 var r = new Rect(ox + (slot % 4) * (cell + gap), oy + (slot / 4) * (cell - 6 + gap), cell, cell - 6);
                 bySlot.TryGetValue(slot, out var item);
-                GUI.color = item != null ? new Color(0.35f, 0.28f, 0.2f) : new Color(0.2f, 0.17f, 0.13f);
-                GUI.Box(r, item != null ? (item.count > 1 ? $"{item.name}\n<color=#ffff00>{item.count:N0}</color>" : item.name) : "", cellStyle);
-                GUI.color = Color.white;
-                if (item != null) HandleItemClick(r, item, false);
+                if (item == null)
+                {
+                    GUI.color = new Color(0.2f, 0.17f, 0.13f);
+                    GUI.Box(r, "", cellStyle);
+                    GUI.color = Color.white;
+                    continue;
+                }
+                OsrsItemIcons.DrawSlot(r, item.id, item.count, item.name,
+                    item.count > 1 ? $"{item.name}\n<color=#ffff00>{item.count:N0}</color>" : item.name,
+                    cellStyle, new Color(0.35f, 0.28f, 0.2f));
+                HandleItemClick(r, item, false);
             }
         }
 
@@ -122,7 +137,10 @@ namespace OsrsPort
                 GUI.Box(r, "", cellStyle);
                 GUI.color = Color.white;
                 GUI.Label(new Rect(r.x + 6, r.y + 3, 70, 20), WornSlotNames[slot] + ":", smallStyle);
-                GUI.Label(new Rect(r.x + 76, r.y + 3, r.width - 80, 20), item != null ? (item.count > 1 ? $"{item.name} x{item.count:N0}" : item.name) : "-", smallStyle);
+                float nameX = 76;
+                if (item != null && OsrsItemIcons.Draw(new Rect(r.x + 72, r.y, OsrsItemIcons.CellW * 26f / OsrsItemIcons.CellH, 26), item.id))
+                    nameX = 106;
+                GUI.Label(new Rect(r.x + nameX, r.y + 3, r.width - nameX - 4, 20), item != null ? (item.count > 1 ? $"{item.name} x{item.count:N0}" : item.name) : "-", smallStyle);
                 if (item != null) HandleItemClick(r, item, true);
                 y += 30;
             }

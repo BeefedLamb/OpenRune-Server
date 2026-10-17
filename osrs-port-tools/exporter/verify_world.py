@@ -63,10 +63,13 @@ def load_square(world, rx, ry, models, tex, vs, vcache):
     else: raise KeyError
     with open(f'{world}/pack_{pack}.bin', 'rb') as f:
         f.seek(off); d = gzip.decompress(f.read(ln))
-    assert d[:3] == b'SQ1'; p = 11
-    (nv,) = struct.unpack_from('<I', d, p); p += 4
-    TV = np.frombuffer(d, '<i2', nv * 3, p).reshape(-1, 3).astype(float) / 128.0; p += nv * 6
-    TC = np.frombuffer(d, 'u1', nv * 3, p).reshape(-1, 3) / 255.0; p += nv * 3
+    assert d[:3] == b'SQ2'; p = 11
+    TVs, TCs = [], []
+    for _z in range(4):
+        (nv,) = struct.unpack_from('<I', d, p); p += 4
+        TVs.append(np.frombuffer(d, '<i2', nv * 3, p).reshape(-1, 3).astype(float) / 128.0); p += nv * 6
+        TCs.append(np.frombuffer(d, 'u1', nv * 3, p).reshape(-1, 3) / 255.0); p += nv * 3
+    TV, TC = np.concatenate(TVs), np.concatenate(TCs)
     TV = TV + np.array([rx * 64, 0, ry * 64])
     (npl,) = struct.unpack_from('<I', d, p); p += 4
     P = np.frombuffer(d, np.dtype([('vid','<u4'),('lx','u1'),('lz','u1'),('level','u1'),('yaw','<u2'),('px','<i2'),('pz','<i2'),('py','<i2'),('decor','u1')]), npl, p)

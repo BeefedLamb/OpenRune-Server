@@ -8,7 +8,10 @@ namespace OsrsPort
 {
     /// <summary>
     /// Crosshair targeting: whatever is under the centre of the screen is the target. E does its
-    /// first option, keys 1-5 pick an option. The server checks the range; the client only sends
+    /// default (first) option; keys 1-9/0 fire hotbar abilities (Attack, Pickpocket, Talk-to...) on
+    /// the hovered, Tab-locked or last-selected NPC; Shift+1-5 still picks a raw option. C toggles
+    /// cursor mode: mouse look stops, a cursor appears, left click = default option and right click
+    /// opens the OSRS option menu for whatever is under the cursor. The server checks the range; the client only sends
     /// when the player is standing next to the target (OSRS rules: adjacent to the footprint).
     /// Also draws the HUD: crosshair, target label, health, chat log and hit numbers.
     ///
@@ -40,13 +43,27 @@ namespace OsrsPort
         public static bool TextInputActive { get; private set; }
         private bool chatOpen;
         private string chatText = "";
-        private bool focusChat;
         private OsrsNpcRef lockedNpc;
         private int engagedNpc = -1;
         private float lastAimedAtEngaged;
         private float attackPressStart = -1f;
         private bool blocking;
         private float swingStart = -10f;
+
+        /// <summary>Cursor mode (C): free mouse, hover + left/right click NPCs and objects.</summary>
+        public static bool CursorMode { get; private set; }
+        /// <summary>The last NPC you clicked or used an ability on; hotbar abilities fall back to it.</summary>
+        private OsrsNpcRef selectedNpc;
+        private readonly Dictionary<string, float> abilityReadyAt = new Dictionary<string, float>();
+        private bool menuOpen;
+        private Vector2 menuPos;
+        private bool menuIsNpc;
+        private OsrsNpcRef menuNpc;
+        private OsrsWorldLoader.Placement menuLoc;
+        private string menuName;
+        private string[] menuOps;
+        private GUIStyle menuStyle, slotStyle, keyStyle;
+        private const float SlotSize = 48f, SlotGap = 4f;
 
         private void Start()
         {
@@ -80,7 +97,9 @@ namespace OsrsPort
             ReadChatInput();
             if (chatOpen) { TextInputActive = true; return; }
             TextInputActive = false;
-            if (OsrsPanels.UiOpen) { hasTarget = false; return; }
+            if (OsrsPanels.UiOpen) { hasTarget = false; menuOpen = false; return; }
+            ReadCursorToggle();
+            ValidateSelection();
             if (link != null && link.CurrentDialogue != null)
             {
                 ReadDialogueInput(link.CurrentDialogue);
@@ -90,6 +109,7 @@ namespace OsrsPort
             ReadLockOnInput();
             FindTarget();
             ReadInput();
+            ReadCursorClicks();
             ReadCombatInput();
             UpdateEngagement();
             if (link != null && link.LastAnimTime > swingStart) swingStart = link.LastAnimTime;
@@ -144,6 +164,7 @@ namespace OsrsPort
             }
             if (!link.LoggedIn) { link.messages.Add("Not connected to the server."); return; }
             if (!inRange) { link.messages.Add($"You need to be next to the {targetName.ToLowerInvariant()} to attack it."); return; }
+            if (StunBlocked()) return;
             if (power) link.Send("SPEC");
             link.Send($"OPNPC {targetNpc.index} {op}");
             engagedNpc = targetNpc.index;
@@ -156,6 +177,8 @@ namespace OsrsPort
         {
             if (engagedNpc < 0) return;
             if (targetIsNpc && targetNpc != null && targetNpc.index == engagedNpc)
+                lastAimedAtEngaged = Time.time;
+            if ((CursorMode || lockedNpc != null) && selectedNpc != null && selectedNpc.index == engagedNpc)
                 lastAimedAtEngaged = Time.time;
             bool gone = true;
             foreach (var npc in OsrsNpcRef.All) if (npc.index == engagedNpc) { gone = false; break; }
@@ -191,7 +214,7 @@ namespace OsrsPort
 #endif
             if (!chatOpen)
             {
-                if (enter && Cursor.lockState == CursorLockMode.Locked) { chatOpen = true; chatText = ""; focusChat = true; }
+                if (enter && InputAllowed) { chatOpen = true; chatText = ""; }
                 return;
             }
             if (escape) { chatOpen = false; return; }
@@ -218,7 +241,7 @@ namespace OsrsPort
         /// <summary>Space, E or a click continues a dialogue; number keys pick a menu option.</summary>
         private void ReadDialogueInput(OsrsServerLink.Dialogue d)
         {
-            if (Cursor.lockState != CursorLockMode.Locked) return;
+            if (!InputAllowed) return;
             bool cont; int pick = -1;
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current; var m = Mouse.current;
@@ -273,7 +296,7 @@ namespace OsrsPort
         /// <summary>Tab locks the camera onto the nearest enemy in view (Tab again cycles, Tab with none in view releases).</summary>
         private void ReadLockOnInput()
         {
-            if (Cursor.lockState != CursorLockMode.Locked) return;
+            if (!InputAllowed) return;
             bool tab;
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current;
@@ -316,7 +339,7 @@ namespace OsrsPort
         {
             hasTarget = false;
             targetNpc = null;
-            if (lockedNpc != null)
+            if (lockedNpc != null && !CursorMode)
             {
                 var me0 = link != null ? link.CurrentTile() : new Vector3Int(Mathf.FloorToInt(transform.position.x), Mathf.FloorToInt(transform.position.z), 0);
                 targetNpc = lockedNpc;
@@ -329,7 +352,8 @@ namespace OsrsPort
                 inRange = Distance(me0.x, me0.y, lx, lz, lockedNpc.size, lockedNpc.size) <= opRange;
                 return;
             }
-            var ray = new Ray(cam.transform.position, cam.transform.forward);
+            if (CursorMode && (menuOpen || OverHotbar(MouseGuiPos()))) return;
+            var ray = CursorMode ? cam.ScreenPointToRay(MouseScreenPos()) : new Ray(cam.transform.position, cam.transform.forward);
             float extra = Vector3.Distance(cam.transform.position, transform.position);
             if (!Physics.Raycast(ray, out var hit, reach + extra, ~(1 << OsrsNpcManager.PlayerLayer)))
                 return;
@@ -392,39 +416,379 @@ namespace OsrsPort
             return -1;
         }
 
+        private bool InputAllowed => Cursor.lockState == CursorLockMode.Locked || CursorMode;
+
+        /// <summary>E = default option of the target; 1-9/0 = hotbar abilities; Shift+1-5 = raw option.</summary>
         private void ReadInput()
         {
-            if (Cursor.lockState != CursorLockMode.Locked) return;
-            int op = -1;
+            if (!InputAllowed || menuOpen) return;
+            int op = -1, slot = -1;
+            bool shift;
 #if ENABLE_INPUT_SYSTEM
             var kb = Keyboard.current;
             if (kb == null) return;
+            shift = kb.leftShiftKey.isPressed || kb.rightShiftKey.isPressed;
             if (kb.eKey.wasPressedThisFrame) op = FirstOp();
-            else if (kb.digit1Key.wasPressedThisFrame) op = 1;
-            else if (kb.digit2Key.wasPressedThisFrame) op = 2;
-            else if (kb.digit3Key.wasPressedThisFrame) op = 3;
-            else if (kb.digit4Key.wasPressedThisFrame) op = 4;
-            else if (kb.digit5Key.wasPressedThisFrame) op = 5;
+            else
+            {
+                var digits = new[] { kb.digit1Key, kb.digit2Key, kb.digit3Key, kb.digit4Key, kb.digit5Key,
+                                     kb.digit6Key, kb.digit7Key, kb.digit8Key, kb.digit9Key, kb.digit0Key };
+                for (int i = 0; i < digits.Length; i++)
+                    if (digits[i].wasPressedThisFrame) { slot = i; break; }
+            }
 #else
+            shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
             if (Input.GetKeyDown(KeyCode.E)) op = FirstOp();
-            else for (int i = 1; i <= 5; i++) if (Input.GetKeyDown(KeyCode.Alpha0 + i)) op = i;
+            else for (int i = 0; i < 10; i++) if (Input.GetKeyDown(i == 9 ? KeyCode.Alpha0 : KeyCode.Alpha1 + i)) { slot = i; break; }
 #endif
-            if (op < 1 || !hasTarget || targetOps == null || op > targetOps.Length || string.IsNullOrEmpty(targetOps[op - 1]))
-                return;
+            if (slot >= 0 && shift && slot < 5) op = slot + 1;
+            else if (slot >= 0) { UseAbility(slot); return; }
+            if (op < 1 || !hasTarget) return;
+            if (targetIsNpc && targetNpc != null) selectedNpc = targetNpc;
+            SendOp(targetIsNpc, targetNpc, targetLoc, targetName, targetOps, op);
+        }
+
+        /// <summary>Sends one option (1-5) on an NPC or loc after the usual connection/range checks.</summary>
+        private void SendOp(bool isNpc, OsrsNpcRef npc, OsrsWorldLoader.Placement loc, string name, string[] ops, int op)
+        {
+            if (op < 1 || ops == null || op > ops.Length || string.IsNullOrEmpty(ops[op - 1])) return;
+            if (isNpc && npc == null) return;
             if (link == null || !link.LoggedIn)
             {
                 link?.messages.Add("Not connected to the server.");
                 return;
             }
-            if (!inRange)
+            bool near = isNpc ? NpcInRange(npc) : LocInRange(loc);
+            if (!near)
             {
-                link.messages.Add($"You need to be next to the {targetName.ToLowerInvariant()} to do that.");
+                link.messages.Add($"You need to be next to the {StripLevel(name).ToLowerInvariant()} to do that.");
                 return;
             }
-            if (targetIsNpc && targetNpc != null)
-                link.Send($"OPNPC {targetNpc.index} {op}");
+            if (StunBlocked()) return;
+            if (isNpc)
+            {
+                link.ShopTitle = npc.displayName;
+                link.Send($"OPNPC {npc.index} {op}");
+                if (ops[op - 1] == "Attack")
+                {
+                    engagedNpc = npc.index;
+                    lastAimedAtEngaged = Time.time;
+                    swingStart = Time.time;
+                }
+            }
             else
-                link.Send($"OPLOC {targetLoc.locId} {targetLoc.x} {targetLoc.z} {targetLoc.level} {op}");
+                link.Send($"OPLOC {loc.locId} {loc.x} {loc.z} {loc.level} {op}");
+        }
+
+        private float lastStunNotice = -10f;
+
+        /// <summary>True (with a throttled chat notice) while the server has us stunned/frozen.</summary>
+        private bool StunBlocked()
+        {
+            if (link == null || !link.Frozen) return false;
+            if (Time.time - lastStunNotice > 1f)
+            {
+                lastStunNotice = Time.time;
+                link.messages.Add("You're stunned!");
+            }
+            return true;
+        }
+
+        /// <summary>OSRS-style stun feedback: birds/stars circling over the view, a pulsing banner and a tint.</summary>
+        private void DrawStun()
+        {
+            if (link == null || !link.Frozen) return;
+            float t = Time.time - link.FrozenSince;
+            float cx = Screen.width / 2f, top = Screen.height * 0.22f;
+            float flash = Mathf.Clamp01(1f - t * 2f);
+            GUI.color = new Color(1f, 0.9f, 0.3f, 0.10f + 0.25f * flash);
+            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
+            const int stars = 5;
+            for (int i = 0; i < stars; i++)
+            {
+                float a = t * 3.2f + i * Mathf.PI * 2f / stars;
+                float sx = cx + Mathf.Cos(a) * 70f, sy = top + Mathf.Sin(a) * 16f;
+                GUI.color = new Color(1f, 0.95f, 0.3f, Mathf.Sin(a) > 0f ? 1f : 0.55f);
+                Shadowed(new Rect(sx - 12, sy - 12, 24, 24), "*", bigStyle);
+            }
+            float pulse = 0.75f + 0.25f * Mathf.Sin(Time.time * 8f);
+            GUI.color = new Color(1f, 0.85f, 0.2f, pulse);
+            Shadowed(new Rect(cx - 200, top + 22, 400, 30), "Stunned!", bigStyle);
+            GUI.color = Color.white;
+        }
+
+        private static string StripLevel(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            int i = name.IndexOf(" (level ", System.StringComparison.Ordinal);
+            return i > 0 ? name.Substring(0, i) : name;
+        }
+
+        private Vector3Int MyTile() => link != null ? link.CurrentTile()
+            : new Vector3Int(Mathf.FloorToInt(transform.position.x), Mathf.FloorToInt(transform.position.z), 0);
+
+        private bool NpcInRange(OsrsNpcRef npc)
+        {
+            if (npc == null) return false;
+            var me = MyTile();
+            int nx = Mathf.FloorToInt(npc.transform.position.x - npc.size * 0.5f);
+            int nz = Mathf.FloorToInt(npc.transform.position.z - npc.size * 0.5f);
+            return Distance(me.x, me.y, nx, nz, npc.size, npc.size) <= opRange;
+        }
+
+        private bool LocInRange(OsrsWorldLoader.Placement pl)
+        {
+            var me = MyTile();
+            return Distance(me.x, me.y, pl.x, pl.z, pl.sizeX, pl.sizeZ) <= opRange;
+        }
+
+        // ---------------------------------------------------------------- abilities
+
+        /// <summary>The NPC hotbar abilities act on: hovered, else Tab-locked, else last selected.</summary>
+        private OsrsNpcRef AbilityTarget()
+        {
+            if (hasTarget && targetIsNpc && targetNpc != null && !targetNpc.isPlayer) return targetNpc;
+            if (lockedNpc != null) return lockedNpc;
+            return selectedNpc;
+        }
+
+        private void ValidateSelection()
+        {
+            if (selectedNpc == null) return;
+            if (!selectedNpc.isActiveAndEnabled || selectedNpc.dying || selectedNpc.hp == 0
+                || Vector3.Distance(selectedNpc.transform.position, transform.position) > 20f)
+                selectedNpc = null;
+        }
+
+        private static string NpcLabel(OsrsNpcRef npc) =>
+            npc.combatLevel > 0 ? $"{npc.displayName} (level {npc.combatLevel})" : npc.displayName;
+
+        private void UseAbility(int slot)
+        {
+            var ab = slot >= 0 && slot < OsrsAbilities.Hotbar.Length ? OsrsAbilities.Hotbar[slot] : null;
+            if (ab == null || link == null) return;
+            var npc = AbilityTarget();
+            if (npc == null) { link.messages.Add($"{ab.name}: select a target first."); return; }
+            int op = OsrsAbilities.OpIndex(npc.ops, ab.opName);
+            if (op < 0) { link.messages.Add($"You can't {ab.name.ToLowerInvariant()} the {npc.displayName.ToLowerInvariant()}."); return; }
+            if (abilityReadyAt.TryGetValue(ab.id, out var ready) && Time.time < ready) return;
+            if (!link.LoggedIn) { link.messages.Add("Not connected to the server."); return; }
+            if (!NpcInRange(npc)) { link.messages.Add($"You need to be next to the {npc.displayName.ToLowerInvariant()} to do that."); return; }
+            if (StunBlocked()) return;
+            selectedNpc = npc;
+            abilityReadyAt[ab.id] = Time.time + ab.cooldown;
+            link.ShopTitle = npc.displayName;
+            link.Send($"OPNPC {npc.index} {op}");
+            if (ab.engages)
+            {
+                engagedNpc = npc.index;
+                lastAimedAtEngaged = Time.time;
+                swingStart = Time.time;
+            }
+        }
+
+        // ---------------------------------------------------------------- cursor mode
+
+        /// <summary>C toggles cursor mode; Escape closes the menu, then leaves cursor mode.</summary>
+        private void ReadCursorToggle()
+        {
+            bool toggle, escape;
+#if ENABLE_INPUT_SYSTEM
+            var kb = Keyboard.current;
+            toggle = kb != null && kb.cKey.wasPressedThisFrame;
+            escape = kb != null && kb.escapeKey.wasPressedThisFrame;
+#else
+            toggle = Input.GetKeyDown(KeyCode.C);
+            escape = Input.GetKeyDown(KeyCode.Escape);
+#endif
+            // Something else re-locked the mouse (a panel closing, a click while paused): cursor mode is over.
+            if (CursorMode && Cursor.lockState == CursorLockMode.Locked) { CursorMode = false; menuOpen = false; }
+            if (CursorMode && escape)
+            {
+                if (menuOpen) menuOpen = false;
+                else SetCursorMode(false, relock: false);
+                return;
+            }
+            if (toggle) SetCursorMode(!CursorMode, relock: true);
+        }
+
+        private void SetCursorMode(bool on, bool relock)
+        {
+            CursorMode = on;
+            menuOpen = false;
+            attackPressStart = -1f;
+            if (on)
+            {
+                if (blocking) { blocking = false; link?.Send("BLOCK 0"); }
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
+            else if (relock)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+        }
+
+        private static Vector2 MouseScreenPos()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Mouse.current != null ? Mouse.current.position.ReadValue() : Vector2.zero;
+#else
+            return Input.mousePosition;
+#endif
+        }
+
+        private static Vector2 MouseGuiPos()
+        {
+            var p = MouseScreenPos();
+            return new Vector2(p.x, Screen.height - p.y);
+        }
+
+        /// <summary>Left click = default option (and selects the NPC); right click = option menu.</summary>
+        private void ReadCursorClicks()
+        {
+            if (!CursorMode || menuOpen) return;
+            bool left, right;
+#if ENABLE_INPUT_SYSTEM
+            var m = Mouse.current;
+            if (m == null) return;
+            left = m.leftButton.wasPressedThisFrame;
+            right = m.rightButton.wasPressedThisFrame;
+#else
+            left = Input.GetMouseButtonDown(0);
+            right = Input.GetMouseButtonDown(1);
+#endif
+            if (!left && !right) return;
+            var gp = MouseGuiPos();
+            if (OverHotbar(gp)) return;
+            if (!hasTarget)
+            {
+                if (left) selectedNpc = null;
+                return;
+            }
+            if (targetIsNpc && targetNpc != null && !targetNpc.isPlayer) selectedNpc = targetNpc;
+            if (left)
+            {
+                SendOp(targetIsNpc, targetNpc, targetLoc, targetName, targetOps, FirstOp());
+                return;
+            }
+            menuOpen = true;
+            menuPos = gp;
+            menuIsNpc = targetIsNpc;
+            menuNpc = targetNpc;
+            menuLoc = targetLoc;
+            menuName = targetName;
+            menuOps = targetOps != null ? (string[])targetOps.Clone() : new string[5];
+        }
+
+        private Rect HotbarRect()
+        {
+            int n = OsrsAbilities.Hotbar.Length;
+            float w = n * SlotSize + (n - 1) * SlotGap;
+            return new Rect((Screen.width - w) / 2f, Screen.height - SlotSize - 10f, w, SlotSize);
+        }
+
+        private bool OverHotbar(Vector2 guiPos) => HotbarRect().Contains(guiPos);
+
+        private void DrawHotbar()
+        {
+            if (slotStyle == null)
+            {
+                slotStyle = new GUIStyle(GUI.skin.label) { fontSize = 11, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter, wordWrap = true };
+                slotStyle.normal.textColor = Color.white;
+                keyStyle = new GUIStyle(GUI.skin.label) { fontSize = 10, alignment = TextAnchor.UpperLeft };
+                keyStyle.normal.textColor = new Color(1f, 1f, 1f, 0.8f);
+            }
+            var bar = HotbarRect();
+            var npc = AbilityTarget();
+            bool near = npc != null && NpcInRange(npc);
+            for (int i = 0; i < OsrsAbilities.Hotbar.Length; i++)
+            {
+                var ab = OsrsAbilities.Hotbar[i];
+                var r = new Rect(bar.x + i * (SlotSize + SlotGap), bar.y, SlotSize, SlotSize);
+                GUI.color = new Color(0f, 0f, 0f, 0.65f);
+                GUI.DrawTexture(r, Texture2D.whiteTexture);
+                if (ab != null)
+                {
+                    bool valid = npc != null && OsrsAbilities.OpIndex(npc.ops, ab.opName) > 0;
+                    var c = ab.color;
+                    float a = valid ? (near ? 0.95f : 0.6f) : 0.18f;
+                    GUI.color = new Color(c.r, c.g, c.b, a);
+                    GUI.DrawTexture(new Rect(r.x + 2, r.y + 2, r.width - 4, r.height - 4), Texture2D.whiteTexture);
+                    if (abilityReadyAt.TryGetValue(ab.id, out var ready) && Time.time < ready)
+                    {
+                        float frac = Mathf.Clamp01((ready - Time.time) / Mathf.Max(0.01f, ab.cooldown));
+                        GUI.color = new Color(0f, 0f, 0f, 0.6f);
+                        GUI.DrawTexture(new Rect(r.x + 2, r.y + 2, r.width - 4, (r.height - 4) * frac), Texture2D.whiteTexture);
+                    }
+                    GUI.color = valid ? Color.white : new Color(1f, 1f, 1f, 0.45f);
+                    Shadowed(new Rect(r.x, r.y + 6, r.width, r.height - 6), ab.shortName, slotStyle, TextAnchor.MiddleCenter);
+                    if (CursorMode && GUI.Button(r, GUIContent.none, GUIStyle.none)) UseAbility(i);
+                }
+                GUI.color = Color.white;
+                Shadowed(new Rect(r.x + 3, r.y + 1, 20, 14), OsrsAbilities.KeyLabel(i), keyStyle, TextAnchor.UpperLeft);
+            }
+            GUI.color = Color.white;
+            string sel = npc != null ? $"Target: {NpcLabel(npc)}" + (near ? "" : "  (move closer)") : "No target";
+            string mode = CursorMode ? "[C] Cursor mode ON - LMB default, RMB options" : "[C] Cursor mode";
+            Shadowed(new Rect(bar.x, bar.y - 40, bar.width, 20), sel, smallStyle, TextAnchor.MiddleCenter);
+            Shadowed(new Rect(bar.x, bar.y - 22, bar.width, 20), mode, smallStyle, TextAnchor.MiddleCenter);
+            if (npc != null && npc != targetNpc)
+            {
+                var sp = cam.WorldToScreenPoint(npc.transform.position + Vector3.up * (npc.height + 0.5f));
+                if (sp.z > 0)
+                {
+                    GUI.color = new Color(0.4f, 0.9f, 1f, 0.9f);
+                    GUI.DrawTexture(new Rect(sp.x - 5, Screen.height - sp.y - 5, 10, 10), Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                }
+            }
+        }
+
+        /// <summary>The OSRS right-click menu: "Choose Option", every real option by name, Cancel.</summary>
+        private void DrawMenu()
+        {
+            if (menuStyle == null)
+            {
+                menuStyle = new GUIStyle(GUI.skin.label) { fontSize = 13, alignment = TextAnchor.MiddleLeft, richText = true };
+                menuStyle.normal.textColor = Color.white;
+                menuStyle.hover.textColor = Color.yellow;
+            }
+            var entries = new List<(string label, int op)>();
+            string nameColor = menuIsNpc ? "#ffff00" : "#00ffff";
+            string plain = StripLevel(menuName);
+            for (int i = 0; i < menuOps.Length; i++)
+                if (!string.IsNullOrEmpty(menuOps[i]))
+                    entries.Add(($"{menuOps[i]} <color={nameColor}>{plain}</color>", i + 1));
+            entries.Add(("Cancel", 0));
+            float rowH = 20f, w = 220f, h = 22f + entries.Count * rowH;
+            float x = Mathf.Clamp(menuPos.x - w / 2f, 0, Screen.width - w), y = Mathf.Clamp(menuPos.y - 4f, 0, Screen.height - h);
+            var box = new Rect(x, y, w, h);
+            var e = Event.current;
+            if (e.type == EventType.MouseDown && !box.Contains(e.mousePosition)) { menuOpen = false; e.Use(); return; }
+            GUI.color = new Color(0.36f, 0.32f, 0.24f, 0.95f);
+            GUI.DrawTexture(box, Texture2D.whiteTexture);
+            GUI.color = Color.black;
+            GUI.DrawTexture(new Rect(x + 1, y + 20, w - 2, h - 21), Texture2D.whiteTexture);
+            GUI.color = Color.white;
+            Shadowed(new Rect(x + 4, y + 1, w - 8, 18), "Choose Option", smallStyle, TextAnchor.MiddleLeft);
+            for (int i = 0; i < entries.Count; i++)
+            {
+                var r = new Rect(x + 4, y + 21 + i * rowH, w - 8, rowH);
+                bool hover = r.Contains(e.mousePosition);
+                if (hover)
+                {
+                    GUI.color = new Color(1f, 1f, 1f, 0.12f);
+                    GUI.DrawTexture(r, Texture2D.whiteTexture);
+                    GUI.color = Color.white;
+                }
+                if (GUI.Button(r, entries[i].label, menuStyle))
+                {
+                    menuOpen = false;
+                    if (entries[i].op > 0) SendOp(menuIsNpc, menuNpc, menuLoc, menuName, menuOps, entries[i].op);
+                }
+            }
         }
 
         private void OnGUI()
@@ -438,11 +802,25 @@ namespace OsrsPort
                 bigStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
             }
             float cx = Screen.width / 2f, cy = Screen.height / 2f;
-            GUI.color = hasTarget ? (inRange ? Color.yellow : Color.white) : new Color(1f, 1f, 1f, 0.7f);
-            GUI.Box(new Rect(cx - 3, cy - 3, 6, 6), GUIContent.none);
-            GUI.color = Color.white;
+            if (!CursorMode)
+            {
+                GUI.color = hasTarget ? (inRange ? Color.yellow : Color.white) : new Color(1f, 1f, 1f, 0.7f);
+                GUI.Box(new Rect(cx - 3, cy - 3, 6, 6), GUIContent.none);
+                GUI.color = Color.white;
+            }
 
-            if (hasTarget)
+            if (hasTarget && CursorMode && !menuOpen)
+            {
+                // OSRS-style hover text at the top-left plus a tag by the cursor.
+                int f = FirstOp();
+                var mp = MouseGuiPos();
+                string hover = f > 0 ? $"{targetOps[f - 1]} {targetName}" : targetName;
+                int more = 0;
+                foreach (var o in targetOps) if (!string.IsNullOrEmpty(o)) more++;
+                if (more > 1) hover += $" / {more - 1} more options";
+                Shadowed(new Rect(mp.x + 14, mp.y + 8, 500, 20), hover, smallStyle, TextAnchor.UpperLeft);
+            }
+            else if (hasTarget)
             {
                 int first = FirstOp();
                 int atk = AttackOp();
@@ -452,15 +830,18 @@ namespace OsrsPort
                 Shadowed(new Rect(cx - 300, cy + 14, 600, 24), line, labelStyle);
                 var extra = new List<string>();
                 for (int i = 0; i < targetOps.Length; i++)
-                    if (!string.IsNullOrEmpty(targetOps[i]) && i + 1 != first && i + 1 != atk) extra.Add($"{i + 1}: {targetOps[i]}");
+                    if (!string.IsNullOrEmpty(targetOps[i]) && i + 1 != first && i + 1 != atk) extra.Add($"Shift+{i + 1}: {targetOps[i]}");
                 if (extra.Count > 0)
                     Shadowed(new Rect(cx - 300, cy + 38, 600, 20), string.Join("   ", extra), smallStyle, TextAnchor.UpperCenter);
                 if (targetIsNpc && targetNpc != null && targetNpc.maxHp > 0)
                     Shadowed(new Rect(cx - 300, cy + 58, 600, 20), $"HP {targetNpc.hp}/{targetNpc.maxHp}", smallStyle, TextAnchor.UpperCenter);
             }
 
+            DrawStun();
             if (link != null && link.CurrentDialogue != null)
                 DrawDialogue(link.CurrentDialogue);
+            if (link != null && !OsrsPanels.UiOpen && link.CurrentDialogue == null)
+                DrawHotbar();
             if (chatOpen)
             {
                 GUI.color = new Color(0f, 0f, 0f, 0.6f);
@@ -468,7 +849,6 @@ namespace OsrsPort
                 GUI.color = Color.white;
                 bool caret = Mathf.FloorToInt(Time.time * 2f) % 2 == 0;
                 Shadowed(new Rect(12, Screen.height - 209, 696, 20), "> " + chatText + (caret ? "_" : ""), smallStyle, TextAnchor.MiddleLeft);
-                focusChat = false;
             }
             if (link != null)
             {
@@ -511,14 +891,24 @@ namespace OsrsPort
                     var msg = link.messages[link.messages.Count - shown + i];
                     Shadowed(new Rect(10, Screen.height - 180 + i * 20, Screen.width - 20, 20), msg, smallStyle);
                 }
-                foreach (var h in link.hitsTaken)
+                // Own hitsplats, stacked under the crosshair like OSRS splats on your character.
+                int slotIdx = 0;
+                for (int i = link.hitsTaken.Count - 1; i >= 0 && slotIdx < 4; i--)
                 {
+                    var h = link.hitsTaken[i];
                     float age = Time.time - h.time;
-                    if (age > 1.2f) continue;
-                    GUI.color = new Color(1f, 0.3f, 0.3f, 1f - age / 1.2f);
-                    GUI.Label(new Rect(cx - 60, cy - 90 - age * 30f, 120, 30), h.damage == 0 ? "0" : $"-{h.damage}", bigStyle);
+                    if (age > HitsplatTime) continue;
+                    DrawHitsplat(new Vector2(cx + (slotIdx % 2 == 0 ? -1 : 1) * (slotIdx > 0 ? 22f : 0f), cy + 70 - (slotIdx / 2) * 26f), h.damage, age, 1.2f);
+                    slotIdx++;
                 }
                 GUI.color = Color.white;
+                if (link.LoggedIn && link.Hp == 0 && link.MaxHp > 0)
+                {
+                    GUI.color = new Color(0f, 0f, 0f, 0.55f);
+                    GUI.Box(new Rect(0, 0, Screen.width, Screen.height), GUIContent.none);
+                    GUI.color = Color.white;
+                    Shadowed(new Rect(0, cy - 40, Screen.width, 40), "Oh dear, you are dead!", bigStyle, TextAnchor.MiddleCenter);
+                }
             }
 
             foreach (var npc in OsrsNpcRef.All)
@@ -539,17 +929,64 @@ namespace OsrsPort
                         }
                     }
                 }
-                foreach (var h in npc.hits)
+                if (npc.isPlayer || cam == null) continue;
+                float ndist = Vector3.Distance(npc.transform.position, cam.transform.position);
+                if (ndist > 30f) continue;
+                // OSRS health bar: over the head while in combat (a few seconds after the last hit).
+                bool showBar = npc.maxHp > 0 && npc.hp >= 0 && (Time.time - npc.lastHitTime < HealthBarTime || npc.dying);
+                var top = cam.WorldToScreenPoint(npc.transform.position + Vector3.up * (npc.height + 0.25f));
+                if (top.z <= 0) continue;
+                float ty = Screen.height - top.y;
+                if (showBar && !(npc.dying && Time.time - npc.deathTime > 0.6f))
                 {
+                    float bw = Mathf.Clamp(60f * (8f / Mathf.Max(4f, ndist)), 30f, 70f), bh = 6f;
+                    float frac = Mathf.Clamp01(npc.hp / (float)npc.maxHp);
+                    GUI.color = new Color(0.8f, 0f, 0f, 1f);
+                    GUI.DrawTexture(new Rect(top.x - bw / 2f, ty - bh - 2f, bw, bh), Texture2D.whiteTexture);
+                    GUI.color = new Color(0f, 0.85f, 0f, 1f);
+                    GUI.DrawTexture(new Rect(top.x - bw / 2f, ty - bh - 2f, bw * frac, bh), Texture2D.whiteTexture);
+                }
+                // Hitsplats on the body: up to 4 at once, OSRS layout (centre, above, left, right).
+                int shownSplats = 0;
+                var mid = cam.WorldToScreenPoint(npc.transform.position + Vector3.up * (npc.height * 0.55f));
+                if (mid.z <= 0) continue;
+                for (int i = npc.hits.Count - 1; i >= 0 && shownSplats < 4; i--)
+                {
+                    var h = npc.hits[i];
                     float age = Time.time - h.time;
-                    if (age > 1.2f) continue;
-                    var wp = npc.transform.position + Vector3.up * (npc.height + 0.2f + age * 0.5f);
-                    var sp = cam.WorldToScreenPoint(wp);
-                    if (sp.z < 0) continue;
-                    GUI.color = new Color(1f, 0.9f, 0.2f, 1f - age / 1.2f);
-                    GUI.Label(new Rect(sp.x - 40, Screen.height - sp.y - 15, 80, 30), h.damage == 0 ? "0" : h.damage.ToString(), bigStyle);
+                    if (age > HitsplatTime) continue;
+                    var off = SplatOffsets[shownSplats];
+                    DrawHitsplat(new Vector2(mid.x + off.x, Screen.height - mid.y + off.y), h.damage, age, 1f);
+                    shownSplats++;
                 }
             }
+            GUI.color = Color.white;
+            if (menuOpen && CursorMode && !OsrsPanels.UiOpen) DrawMenu();
+            else menuOpen = false;
+        }
+
+        private const float HitsplatTime = 1.2f;
+        private const float HealthBarTime = 6f;
+        private static readonly Vector2[] SplatOffsets = { new Vector2(0, 0), new Vector2(0, -22), new Vector2(-22, -11), new Vector2(22, -11) };
+        private GUIStyle splatStyle;
+
+        /// <summary>An OSRS hitsplat: red with the damage, or blue "0" for a miss/block.</summary>
+        private void DrawHitsplat(Vector2 centre, int damage, float age, float scale)
+        {
+            if (splatStyle == null)
+            {
+                splatStyle = new GUIStyle(GUI.skin.label) { fontSize = 14, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
+                splatStyle.normal.textColor = Color.white;
+            }
+            float alpha = age < HitsplatTime - 0.25f ? 1f : Mathf.Clamp01((HitsplatTime - age) / 0.25f);
+            float size = 24f * scale;
+            var r = new Rect(centre.x - size / 2f, centre.y - size / 2f, size, size);
+            GUI.color = new Color(0f, 0f, 0f, 0.6f * alpha);
+            GUI.DrawTexture(new Rect(r.x - 1, r.y - 1, r.width + 2, r.height + 2), Texture2D.whiteTexture);
+            GUI.color = damage > 0 ? new Color(0.75f, 0.05f, 0.05f, alpha) : new Color(0.15f, 0.35f, 0.85f, alpha);
+            GUI.DrawTexture(r, Texture2D.whiteTexture);
+            GUI.color = new Color(1f, 1f, 1f, alpha);
+            Shadowed(r, damage.ToString(), splatStyle, TextAnchor.MiddleCenter);
             GUI.color = Color.white;
         }
 

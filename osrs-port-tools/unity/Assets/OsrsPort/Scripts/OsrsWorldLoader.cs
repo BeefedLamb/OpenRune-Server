@@ -22,6 +22,9 @@ namespace OsrsPort
         public static OsrsWorldLoader Instance { get; private set; }
 
         public int radius = 1;
+        /// <summary>Hide planes above the player's level while something (floor or roof) is overhead, like OSRS roof removal.</summary>
+        public bool hideRoofs = true;
+        public const int Planes = 4;
         public Vector2 spawnTile = new Vector2(3221.5f, 3218.5f);
 
         /// <summary>Kept for the server link; the world no longer has an origin shift.</summary>
@@ -36,10 +39,21 @@ namespace OsrsPort
         private readonly Queue<SquareBuild> uploads = new Queue<SquareBuild>();
         private readonly Dictionary<int, Mesh> variantMeshes = new Dictionary<int, Mesh>();
         private readonly Dictionary<(int x, int z, int level, int layer), LocChange> locChanges = new Dictionary<(int, int, int, int), LocChange>();
+        private readonly Dictionary<(int x, int z, int level), PatchState> patchStates = new Dictionary<(int, int, int), PatchState>();
+        private readonly List<HouseRoom> houseRooms = new List<HouseRoom>();
+        private readonly Dictionary<(int, int), SquareBuild> templateSquares = new Dictionary<(int, int), SquareBuild>();
+        private LoadedSquare house;
         private Task<SquareBuild> building;
         private (int, int) buildingKey;
         private Task loadTask;
         private string status = "Loading world...";
+        private int viewLevel;
+        private bool roofed;
+        private float roofClearTime; // hysteresis: roofs come back only after being clear this long
+        private const float RoofClearDelay = 0.3f;
+
+        /// <summary>The plane the world is currently shown/collided for (the server's level for the player).</summary>
+        public int ViewLevel => viewLevel;
 
         public struct Placement
         {
@@ -59,6 +73,18 @@ namespace OsrsPort
             public float yaw;
             public Vector3 position;
             public bool collide;
+            /// <summary>Id the OsrsLocRef reports for ops when it differs from the model's loc (farming patch base multiloc); 0 = locId.</summary>
+            public int refId;
+        }
+
+        private struct PatchState
+        {
+            public int variant, baseId, shape, rotation;
+        }
+
+        private struct HouseRoom
+        {
+            public int dstX, dstZ, srcX, srcZ, rot, level;
         }
 
         private struct LocChange
@@ -70,9 +96,12 @@ namespace OsrsPort
         private class SquareBuild
         {
             public int rx, ry;
-            public float[] terrainPos; public Color32[] terrainCol;
-            public float[] solidPos; public Color32[] solidCol;
-            public float[] decorPos; public Color32[] decorCol;
+            // One entry per plane (0-3).
+            public float[][] terrainPos; public Color32[][] terrainCol;
+            public float[][] solidPos; public Color32[][] solidCol;
+            public float[][] decorPos; public Color32[][] decorCol;
+            public float[][] heights;  // 65x65 corner heights per plane, NaN where the plane has no ground
+            public byte[][] tileFlags; // 64x64 per plane: 1 = ground tile, 2 = anything (ground or object)
             public List<Placement> placements;
             public List<DynamicSpec> dynamics;
         }
@@ -80,8 +109,11 @@ namespace OsrsPort
         private class LoadedSquare
         {
             public GameObject root;
-            public Mesh solidMesh, decorMesh;
-            public MeshCollider solidCollider, terrainCollider;
+            public GameObject[] planes = new GameObject[Planes];
+            public Mesh[] solidMesh = new Mesh[Planes], decorMesh = new Mesh[Planes];
+            public MeshCollider[] solidCollider = new MeshCollider[Planes];
+            public float[][] heights;
+            public byte[][] tileFlags;
             public List<Placement> placements;
             public Dictionary<(int, int, int, int), List<GameObject>> dynamics = new Dictionary<(int, int, int, int), List<GameObject>>();
         }
@@ -91,7 +123,7 @@ namespace OsrsPort
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoStart()
         {
-            if (FindFirstObjectByType<OsrsWorldLoader>() != null) return;
+            if (FindAnyObjectByType<OsrsWorldLoader>() != null) return;
             if (!File.Exists(Path.Combine(Application.streamingAssetsPath, "world", "index.bin"))) return;
             new GameObject("OsrsWorld").AddComponent<OsrsWorldLoader>();
         }
@@ -138,6 +170,7 @@ namespace OsrsPort
             }
             if (!loadTask.IsCompleted) return;
 
+            UpdatePlaneState();
             Vector3 focus = player != null ? player.position : new Vector3(spawnTile.x, 0f, spawnTile.y);
             int cx = Mathf.FloorToInt(focus.x) >> 6, cz = Mathf.FloorToInt(focus.z) >> 6;
 
@@ -215,40 +248,72 @@ namespace OsrsPort
         {
             var d = world.ReadSquare(rx, ry);
             if (d == null) return null;
-            if (d[0] != 'S' || d[1] != 'Q' || d[2] != '1') throw new InvalidDataException("bad square blob");
+            if (d[0] != 'S' || d[1] != 'Q' || d[2] != '2')
+                throw new InvalidDataException("bad square blob (expected SQ2 per-plane terrain; re-run export_world.py)");
             int p = 11;
-            int nv = BitConverter.ToInt32(d, p); p += 4;
-            var build = new SquareBuild { rx = rx, ry = ry, terrainPos = new float[nv * 3], terrainCol = new Color32[nv], dynamics = new List<DynamicSpec>() };
-            float ox = rx * 64f, oz = ry * 64f;
-            for (int i = 0; i < nv; i++)
+            var build = new SquareBuild
             {
-                build.terrainPos[i * 3] = ox + BitConverter.ToInt16(d, p) / 128f;
-                build.terrainPos[i * 3 + 1] = BitConverter.ToInt16(d, p + 2) / 128f;
-                build.terrainPos[i * 3 + 2] = oz + BitConverter.ToInt16(d, p + 4) / 128f;
-                p += 6;
+                rx = rx, ry = ry, dynamics = new List<DynamicSpec>(),
+                terrainPos = new float[Planes][], terrainCol = new Color32[Planes][],
+                solidPos = new float[Planes][], solidCol = new Color32[Planes][],
+                decorPos = new float[Planes][], decorCol = new Color32[Planes][],
+                heights = new float[Planes][], tileFlags = new byte[Planes][],
+            };
+            float ox = rx * 64f, oz = ry * 64f;
+            for (int lv = 0; lv < Planes; lv++)
+            {
+                int nv = BitConverter.ToInt32(d, p); p += 4;
+                var tpos = new float[nv * 3];
+                var tcol = new Color32[nv];
+                var hgt = new float[65 * 65];
+                for (int i = 0; i < hgt.Length; i++) hgt[i] = float.NaN;
+                var flags = new byte[64 * 64];
+                for (int i = 0; i < nv; i++)
+                {
+                    float lx = BitConverter.ToInt16(d, p) / 128f, y = BitConverter.ToInt16(d, p + 2) / 128f, lz = BitConverter.ToInt16(d, p + 4) / 128f;
+                    tpos[i * 3] = ox + lx; tpos[i * 3 + 1] = y; tpos[i * 3 + 2] = oz + lz;
+                    int cx = Mathf.RoundToInt(lx), cz = Mathf.RoundToInt(lz);
+                    if (cx >= 0 && cx <= 64 && cz >= 0 && cz <= 64) hgt[cx * 65 + cz] = y;
+                    p += 6;
+                }
+                for (int i = 0; i < nv; i++) { tcol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255); p += 3; }
+                for (int t = 0; t + 2 < nv; t += 3)
+                {
+                    float mx = (tpos[t * 3] + tpos[t * 3 + 3] + tpos[t * 3 + 6]) / 3f - ox;
+                    float mz = (tpos[t * 3 + 2] + tpos[t * 3 + 5] + tpos[t * 3 + 8]) / 3f - oz;
+                    int tx = Mathf.Clamp(Mathf.FloorToInt(mx), 0, 63), tz = Mathf.Clamp(Mathf.FloorToInt(mz), 0, 63);
+                    flags[tx * 64 + tz] |= 3;
+                }
+                build.terrainPos[lv] = tpos; build.terrainCol[lv] = tcol;
+                build.heights[lv] = hgt; build.tileFlags[lv] = flags;
             }
-            for (int i = 0; i < nv; i++) { build.terrainCol[i] = new Color32(d[p], d[p + 1], d[p + 2], 255); p += 3; }
 
             int np = BitConverter.ToInt32(d, p); p += 4;
             build.placements = new List<Placement>(np);
             int start = p;
-            int solidFaces = 0, decorFaces = 0;
+            var solidFaces = new int[Planes];
+            var decorFaces = new int[Planes];
             for (int i = 0; i < np; i++)
             {
                 int vid = BitConverter.ToInt32(d, p);
+                int plv = Mathf.Clamp(d[p + 6], 0, Planes - 1);
                 bool decor = d[p + 15] != 0;
                 var variant = world.variants[vid];
                 bool interactive = world.locs.TryGetValue(variant.locId, out var idef) && idef.HasOps;
                 if (!interactive)
                 {
                     int faces = world.GetVariantMesh(vid).faceCount;
-                    if (decor) decorFaces += faces; else solidFaces += faces;
+                    if (decor) decorFaces[plv] += faces; else solidFaces[plv] += faces;
                 }
                 p += 16;
             }
-            build.solidPos = new float[solidFaces * 9]; build.solidCol = new Color32[solidFaces * 3];
-            build.decorPos = new float[decorFaces * 9]; build.decorCol = new Color32[decorFaces * 3];
-            int so = 0, de = 0;
+            for (int lv = 0; lv < Planes; lv++)
+            {
+                build.solidPos[lv] = new float[solidFaces[lv] * 9]; build.solidCol[lv] = new Color32[solidFaces[lv] * 3];
+                build.decorPos[lv] = new float[decorFaces[lv] * 9]; build.decorCol[lv] = new Color32[decorFaces[lv] * 3];
+            }
+            var so = new int[Planes];
+            var de = new int[Planes];
             p = start;
             for (int i = 0; i < np; i++)
             {
@@ -259,6 +324,7 @@ namespace OsrsPort
                 float py = BitConverter.ToInt16(d, p + 13) / 128f;
                 bool decor = d[p + 15] != 0;
                 int lx = d[p + 4], lz = d[p + 5], level = d[p + 6];
+                int lvi = Mathf.Clamp(level, 0, Planes - 1);
                 p += 16;
                 var variant = world.variants[vid];
                 int fx = 1, fz = 1;
@@ -275,9 +341,13 @@ namespace OsrsPort
                 {
                     locId = variant.locId, x = rx * 64 + lx, z = ry * 64 + lz, level = level,
                     sizeX = fx, sizeZ = fz, modelType = variant.modelType, decor = decor, interactive = interactive,
-                    faceStart = decor ? de / 3 : so / 3, faceCount = vm.faceCount,
+                    faceStart = decor ? de[lvi] / 3 : so[lvi] / 3, faceCount = vm.faceCount,
                 };
                 build.placements.Add(placement);
+                var occupied = build.tileFlags[lvi];
+                for (int tx = lx; tx < lx + fx && tx < 64; tx++)
+                    for (int tz = lz; tz < lz + fz && tz < 64; tz++)
+                        occupied[tx * 64 + tz] |= 2;
                 if (interactive)
                 {
                     build.dynamics.Add(new DynamicSpec
@@ -290,9 +360,9 @@ namespace OsrsPort
                 }
                 float ang = yaw * (2f * Mathf.PI / 2048f);
                 float s = Mathf.Sin(ang), c = Mathf.Cos(ang);
-                float[] dst = decor ? build.decorPos : build.solidPos;
-                Color32[] dcol = decor ? build.decorCol : build.solidCol;
-                int o = decor ? de : so;
+                float[] dst = decor ? build.decorPos[lvi] : build.solidPos[lvi];
+                Color32[] dcol = decor ? build.decorCol[lvi] : build.solidCol[lvi];
+                int o = decor ? de[lvi] : so[lvi];
                 int n = vm.faceCount * 3;
                 for (int k = 0; k < n; k++)
                 {
@@ -302,7 +372,7 @@ namespace OsrsPort
                     dst[(o + k) * 3 + 2] = pz + (-s * x + c * z) / 128f;
                     dcol[o + k] = vm.colors[k];
                 }
-                if (decor) de += n; else so += n;
+                if (decor) de[lvi] += n; else so[lvi] += n;
             }
             return build;
         }
@@ -311,17 +381,29 @@ namespace OsrsPort
         {
             var go = new GameObject($"square_{b.rx}_{b.ry}");
             go.transform.SetParent(transform, false);
-            var sq = new LoadedSquare { root = go, placements = b.placements };
-            AddMesh(go, "terrain", b.terrainPos, b.terrainCol, true, out _, out sq.terrainCollider);
-            AddMesh(go, "objects", b.solidPos, b.solidCol, true, out sq.solidMesh, out sq.solidCollider);
-            AddMesh(go, "decor", b.decorPos, b.decorCol, false, out sq.decorMesh, out _);
+            var sq = new LoadedSquare { root = go, placements = b.placements, heights = b.heights, tileFlags = b.tileFlags };
+            for (int lv = 0; lv < Planes; lv++)
+            {
+                var plane = new GameObject($"plane_{lv}");
+                plane.transform.SetParent(go.transform, false);
+                sq.planes[lv] = plane;
+                AddMesh(plane, "terrain", b.terrainPos[lv], b.terrainCol[lv], true, out _, out _);
+                AddMesh(plane, "objects", b.solidPos[lv], b.solidCol[lv], true, out sq.solidMesh[lv], out sq.solidCollider[lv]);
+                AddMesh(plane, "decor", b.decorPos[lv], b.decorCol[lv], false, out sq.decorMesh[lv], out _);
+            }
             foreach (var spec in b.dynamics)
                 AddDynamic(sq, spec);
             loaded[(b.rx, b.ry)] = sq;
+            ApplyPlaneState(sq);
             foreach (var kv in locChanges)
             {
                 if ((kv.Key.x >> 6) != b.rx || (kv.Key.z >> 6) != b.ry) continue;
                 ApplyChange(sq, kv.Key, kv.Value);
+            }
+            foreach (var kv in patchStates)
+            {
+                if ((kv.Key.x >> 6) != b.rx || (kv.Key.z >> 6) != b.ry) continue;
+                ApplyPatch(sq, kv.Key, kv.Value);
             }
         }
 
@@ -343,6 +425,52 @@ namespace OsrsPort
                 if (score > bestScore) { bestScore = score; best = pl; }
             }
             return best;
+        }
+
+        // ------------------------------------------------------------------ per-plane visibility / collision
+
+        /// <summary>
+        /// Follows the server level: planes at or below it collide; planes above never collide and are
+        /// hidden while anything on them is directly over the player (indoors / under a roof).
+        /// </summary>
+        private void UpdatePlaneState()
+        {
+            var link = OsrsServerLink.Instance;
+            int level = Mathf.Clamp(link != null ? link.CurrentLevel : 0, 0, Planes - 1);
+            bool r = false;
+            if (hideRoofs && player != null)
+            {
+                // Check the player's tile and its 8 neighbours so doorways/wall edges don't flicker.
+                int tx = Mathf.FloorToInt(player.position.x), tz = Mathf.FloorToInt(player.position.z);
+                for (int dx = -1; dx <= 1 && !r; dx++)
+                    for (int dz = -1; dz <= 1 && !r; dz++)
+                    {
+                        int x = tx + dx, z = tz + dz;
+                        if (!loaded.TryGetValue((x >> 6, z >> 6), out var sq)) continue;
+                        for (int lv = level + 1; lv < Planes && !r; lv++)
+                            r = (sq.tileFlags[lv][(x & 63) * 64 + (z & 63)] & 2) != 0;
+                    }
+                // Hysteresis: hide immediately, but only un-hide after staying uncovered briefly.
+                if (r) roofClearTime = 0f;
+                else if (roofed && level == viewLevel && (roofClearTime += Time.deltaTime) < RoofClearDelay) r = true;
+            }
+            if (level == viewLevel && r == roofed) return;
+            viewLevel = level;
+            roofed = r;
+            foreach (var sq in loaded.Values) ApplyPlaneState(sq);
+        }
+
+        private void ApplyPlaneState(LoadedSquare sq)
+        {
+            for (int lv = 0; lv < Planes; lv++)
+            {
+                var plane = sq.planes[lv];
+                if (plane == null) continue;
+                plane.SetActive(lv <= viewLevel || !roofed);
+                bool collide = lv <= viewLevel;
+                foreach (var c in plane.GetComponentsInChildren<Collider>(true))
+                    c.enabled = collide;
+            }
         }
 
         private void AddMesh(GameObject parent, string name, float[] pos, Color32[] col, bool collide, out Mesh meshOut, out MeshCollider colliderOut)
@@ -414,16 +542,22 @@ namespace OsrsPort
             if (mesh == null) return;
             world.locs.TryGetValue(spec.locId, out var def);
             var go = new GameObject(def != null ? $"loc_{spec.locId}_{def.name}" : $"loc_{spec.locId}");
-            go.transform.SetParent(sq.root.transform, false);
+            int plane = Mathf.Clamp(spec.level, 0, Planes - 1);
+            go.transform.SetParent(sq.planes[plane] != null ? sq.planes[plane].transform : sq.root.transform, false);
             go.transform.position = spec.position;
             go.transform.rotation = Quaternion.Euler(0f, spec.yaw * (360f / 2048f), 0f);
             go.AddComponent<MeshFilter>().sharedMesh = mesh;
             var r = go.AddComponent<MeshRenderer>();
             r.sharedMaterial = material;
             r.shadowCastingMode = ShadowCastingMode.Off;
-            if (spec.collide) go.AddComponent<MeshCollider>().sharedMesh = mesh;
+            if (spec.collide)
+            {
+                var col = go.AddComponent<MeshCollider>();
+                col.sharedMesh = mesh;
+                col.enabled = plane <= viewLevel;
+            }
             var reference = go.AddComponent<OsrsLocRef>();
-            reference.locId = spec.locId;
+            reference.locId = spec.refId > 0 ? spec.refId : spec.locId;
             reference.x = spec.x; reference.z = spec.z; reference.level = spec.level;
             reference.sizeX = spec.sizeX; reference.sizeZ = spec.sizeZ;
             reference.layer = spec.layer;
@@ -469,28 +603,29 @@ namespace OsrsPort
                 foreach (var go in list) Destroy(go);
                 sq.dynamics.Remove(key);
             }
-            bool solidChanged = false, decorChanged = false;
+            var solidChanged = new bool[Planes];
             for (int i = 0; i < sq.placements.Count; i++)
             {
                 var pl = sq.placements[i];
                 if (pl.interactive || pl.faceCount == 0 || pl.x != key.x || pl.z != key.z || pl.level != key.level || LayerOf(pl.modelType) != key.layer) continue;
-                var mesh = pl.decor ? sq.decorMesh : sq.solidMesh;
+                int lv = Mathf.Clamp(pl.level, 0, Planes - 1);
+                var mesh = pl.decor ? sq.decorMesh[lv] : sq.solidMesh[lv];
                 if (mesh == null) continue;
                 var verts = mesh.vertices;
                 int first = pl.faceStart * 3;
                 var sink = verts[first];
                 for (int k = 0; k < pl.faceCount * 3; k++) verts[first + k] = sink;
                 mesh.SetVertices(verts);
-                if (pl.decor) decorChanged = true; else solidChanged = true;
+                if (!pl.decor) solidChanged[lv] = true;
                 pl.faceCount = 0;
                 sq.placements[i] = pl;
             }
-            if (solidChanged && sq.solidCollider != null)
-            {
-                sq.solidCollider.sharedMesh = null;
-                sq.solidCollider.sharedMesh = sq.solidMesh;
-            }
-            _ = decorChanged;
+            for (int lv = 0; lv < Planes; lv++)
+                if (solidChanged[lv] && sq.solidCollider[lv] != null)
+                {
+                    sq.solidCollider[lv].sharedMesh = null;
+                    sq.solidCollider[lv].sharedMesh = sq.solidMesh[lv];
+                }
         }
 
         /// <summary>Mirrors the exporter's placement rules for a loc the server added at runtime.</summary>
@@ -500,7 +635,7 @@ namespace OsrsPort
             if ((orient & 1) == 1) { sx = def.sizeY; sz = def.sizeX; }
             if (shape != 10 && shape != 11) { sx = 1; sz = 1; }
             float cx = x + sx * 0.5f, cz = z + sz * 0.5f;
-            float h = GroundHeight(x >> 6, z >> 6, cx, cz);
+            float h = TerrainHeight(cx, cz, level) ?? 0f;
             bool collide = !(shape == 22 || (shape >= 4 && shape <= 8) || def.solid == 0);
             var jobs = new List<(int mtype, int mrot, float dx, float dz, int extra)>();
             if (shape == 22 || (shape >= 12 && shape <= 21) || shape == 0 || shape == 1 || shape == 3 || shape == 9)
@@ -554,20 +689,220 @@ namespace OsrsPort
             }
         }
 
-        private float GroundHeight(int rx, int ry, float x, float z)
+        /// <summary>Height of the ground at a point on the plane the world is shown for, or null if that square isn't loaded.</summary>
+        public float? TerrainHeight(float x, float z) => TerrainHeight(x, z, viewLevel);
+
+        /// <summary>
+        /// Height of a plane's ground mesh at a point (ignores roofs and scenery), or null if that square isn't
+        /// loaded. Where the plane has no ground (stairwells, open air) the nearest plane below is used.
+        /// Read from the exported corner heights, so it works whether or not the plane is currently shown.
+        /// </summary>
+        public float? TerrainHeight(float x, float z, int level)
         {
-            if (loaded.TryGetValue((rx, ry), out var sq) && sq.terrainCollider != null &&
-                sq.terrainCollider.Raycast(new Ray(new Vector3(x, 100f, z), Vector3.down), out var hit, 200f))
-                return hit.point.y;
+            if (house != null && HouseHeight(x, z, out float hh)) return hh;
+            int ix = Mathf.FloorToInt(x), iz = Mathf.FloorToInt(z);
+            if (!loaded.TryGetValue((ix >> 6, iz >> 6), out var sq) || sq.heights == null) return null;
+            int lx = ix & 63, lz = iz & 63;
+            float fx = x - ix, fz = z - iz;
+            for (int lv = Mathf.Clamp(level, 0, Planes - 1); lv >= 0; lv--)
+            {
+                if ((sq.tileFlags[lv][lx * 64 + lz] & 1) == 0) continue;
+                var h = sq.heights[lv];
+                float h00 = h[lx * 65 + lz], h10 = h[(lx + 1) * 65 + lz], h01 = h[lx * 65 + lz + 1], h11 = h[(lx + 1) * 65 + lz + 1];
+                if (float.IsNaN(h00) || float.IsNaN(h10) || float.IsNaN(h01) || float.IsNaN(h11)) continue;
+                return Mathf.Lerp(Mathf.Lerp(h00, h10, fx), Mathf.Lerp(h01, h11, fx), fz);
+            }
             return 0f;
         }
 
-        /// <summary>Height of the ground mesh at a point (ignores roofs and scenery), or null if that square isn't loaded.</summary>
-        public float? TerrainHeight(float x, float z)
+        // ------------------------------------------------------------------ farming patches
+
+        /// <summary>
+        /// `PATCH x z level variantLocId baseLocId value shape rot`: the patch at that tile now shows
+        /// the variant's model (crop + stage) with the variant's options, but ops still target the
+        /// base multiloc id, which is what the server registers its handlers on.
+        /// </summary>
+        public void Patch(string rest)
         {
-            int rx = Mathf.FloorToInt(x) >> 6, ry = Mathf.FloorToInt(z) >> 6;
-            if (!loaded.TryGetValue((rx, ry), out var sq) || sq.terrainCollider == null) return null;
-            return sq.terrainCollider.Raycast(new Ray(new Vector3(x, 100f, z), Vector3.down), out var hit, 200f) ? hit.point.y : 0f;
+            var p = rest.Split(' ');
+            if (p.Length < 8) return;
+            var v = new int[8];
+            for (int i = 0; i < 8; i++) if (!int.TryParse(p[i], out v[i])) return;
+            var key = (v[0], v[1], v[2]);
+            var state = new PatchState { variant = v[3], baseId = v[4], shape = v[6], rotation = v[7] };
+            patchStates[key] = state;
+            if (loaded.TryGetValue((v[0] >> 6, v[1] >> 6), out var sq)) ApplyPatch(sq, key, state);
+        }
+
+        private void ApplyPatch(LoadedSquare sq, (int x, int z, int level) key, PatchState state)
+        {
+            var lkey = (key.x, key.z, key.level, LayerOf(state.shape));
+            RemoveAt(sq, lkey);
+            if (state.variant < 0) return;
+            if (!world.locs.TryGetValue(state.variant, out var raw)) return;
+            if (!world.locs.TryGetValue(raw.resolvedId, out var def)) def = raw;
+            foreach (var spec in SpecsFor(def, key.x, key.z, key.level, state.shape, state.rotation))
+            {
+                var s = spec;
+                s.refId = state.baseId;
+                AddDynamic(sq, s);
+            }
+        }
+
+        // ------------------------------------------------------------------ player-owned house
+
+        /// <summary>
+        /// `HOUSE level;dstX|dstZ|srcX|srcZ|rot|name;...` builds the house floor by copying each room's
+        /// 8x8 template chunk (from the exported template map square) to its instance chunk, rotated
+        /// clockwise rot quarter-turns. Bare `HOUSE` clears it. Locs arrive separately as `HLOCS`.
+        /// </summary>
+        public void SetHouse(string rest)
+        {
+            ClearHouse();
+            var entries = rest.Split(';');
+            if (entries.Length < 2 || !int.TryParse(entries[0].Trim(), out int level)) return;
+            level = Mathf.Clamp(level, 0, Planes - 1);
+            for (int i = 1; i < entries.Length; i++)
+            {
+                var f = entries[i].Split('|');
+                if (f.Length < 5) continue;
+                if (!int.TryParse(f[0], out int dx) || !int.TryParse(f[1], out int dz) || !int.TryParse(f[2], out int sx)
+                    || !int.TryParse(f[3], out int sz) || !int.TryParse(f[4], out int rot)) continue;
+                houseRooms.Add(new HouseRoom { dstX = dx, dstZ = dz, srcX = sx, srcZ = sz, rot = rot & 3, level = level });
+            }
+            if (houseRooms.Count == 0 || world == null || loadTask == null || !loadTask.IsCompleted) return;
+
+            var root = new GameObject("player_owned_house");
+            root.transform.SetParent(transform, false);
+            house = new LoadedSquare { root = root, placements = new List<Placement>() };
+            for (int lv = 0; lv < Planes; lv++)
+            {
+                var plane = new GameObject($"plane_{lv}");
+                plane.transform.SetParent(root.transform, false);
+                house.planes[lv] = plane;
+            }
+            var pos = new List<float>();
+            var col = new List<Color32>();
+            foreach (var room in houseRooms)
+            {
+                var src = TemplateSquare(room.srcX >> 6, room.srcZ >> 6);
+                if (src == null) { Debug.LogWarning($"OsrsPort: house template square {room.srcX >> 6}_{room.srcZ >> 6} is not exported"); continue; }
+                // The engine copies template plane 0 into the house (RegionTemplate level 0).
+                var tp = src.terrainPos[0];
+                var tc = src.terrainCol[0];
+                int nv = tc.Length;
+                for (int t = 0; t + 2 < nv; t += 3)
+                {
+                    float mx = (tp[t * 3] + tp[t * 3 + 3] + tp[t * 3 + 6]) / 3f - room.srcX;
+                    float mz = (tp[t * 3 + 2] + tp[t * 3 + 5] + tp[t * 3 + 8]) / 3f - room.srcZ;
+                    if (mx < 0f || mx >= 8f || mz < 0f || mz >= 8f) continue;
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int vi = t + k;
+                        var (u, w) = RotateChunkPoint(tp[vi * 3] - room.srcX, tp[vi * 3 + 2] - room.srcZ, room.rot);
+                        pos.Add(room.dstX + u); pos.Add(tp[vi * 3 + 1]); pos.Add(room.dstZ + w);
+                        col.Add(tc[vi]);
+                    }
+                }
+            }
+            AddMesh(house.planes[0], "terrain", pos.ToArray(), col.ToArray(), true, out _, out _);
+        }
+
+        /// <summary>`HLOCS id|x|z|level|shape|rot;...`: every loc in the house, already placed by the server.</summary>
+        public void SetHouseLocs(string rest)
+        {
+            if (house == null) return;
+            foreach (var list in house.dynamics.Values)
+                foreach (var go in list) Destroy(go);
+            house.dynamics.Clear();
+            foreach (var e in rest.Split(';'))
+            {
+                if (e.Length == 0) continue;
+                var f = e.Split('|');
+                if (f.Length < 6) continue;
+                var v = new int[6];
+                bool ok = true;
+                for (int i = 0; i < 6; i++) ok &= int.TryParse(f[i], out v[i]);
+                if (!ok || !world.locs.TryGetValue(v[0], out var raw)) continue;
+                if (!world.locs.TryGetValue(raw.resolvedId, out var def)) def = raw;
+                foreach (var spec in SpecsFor(def, v[1], v[2], v[3], v[4], v[5]))
+                {
+                    var s = spec;
+                    s.refId = v[0];
+                    AddDynamic(house, s);
+                }
+            }
+            // Only objects with options are targetable, like baked scenery in the streamed world.
+            foreach (var list in house.dynamics.Values)
+                foreach (var go in list)
+                {
+                    var r = go.GetComponent<OsrsLocRef>();
+                    if (r != null && (r.def == null || !r.def.HasOps)) Destroy(r);
+                }
+        }
+
+        public bool InHouse => house != null;
+
+        private void ClearHouse()
+        {
+            houseRooms.Clear();
+            if (house == null) return;
+            foreach (var mf in house.root.GetComponentsInChildren<MeshFilter>())
+                if (mf.sharedMesh != null && !mf.sharedMesh.name.StartsWith("variant_"))
+                    Destroy(mf.sharedMesh);
+            Destroy(house.root);
+            house = null;
+        }
+
+        private SquareBuild TemplateSquare(int rx, int ry)
+        {
+            if (templateSquares.TryGetValue((rx, ry), out var b)) return b;
+            b = world.squares.ContainsKey((rx, ry)) ? BuildSquare(rx, ry) : null;
+            templateSquares[(rx, ry)] = b;
+            return b;
+        }
+
+        /// <summary>Point inside an 8x8 chunk rotated clockwise <paramref name="rot"/> quarter-turns (tile x,z -> z,7-x for rot 1).</summary>
+        private static (float, float) RotateChunkPoint(float x, float z, int rot)
+        {
+            switch (rot & 3)
+            {
+                case 1: return (z, 8f - x);
+                case 2: return (8f - x, 8f - z);
+                case 3: return (8f - z, x);
+                default: return (x, z);
+            }
+        }
+
+        /// <summary>Ground height inside the house, read from the template square's plane-0 corner heights.</summary>
+        private bool HouseHeight(float x, float z, out float h)
+        {
+            h = 0f;
+            foreach (var room in houseRooms)
+            {
+                float u = x - room.dstX, w = z - room.dstZ;
+                if (u < 0f || u >= 8f || w < 0f || w >= 8f) continue;
+                // Inverse of RotateChunkPoint.
+                float a, b;
+                switch (room.rot & 3)
+                {
+                    case 1: a = 8f - w; b = u; break;
+                    case 2: a = 8f - u; b = 8f - w; break;
+                    case 3: a = w; b = 8f - u; break;
+                    default: a = u; b = w; break;
+                }
+                var src = TemplateSquare(room.srcX >> 6, room.srcZ >> 6);
+                if (src == null) return false;
+                float sx = (room.srcX & 63) + a, sz = (room.srcZ & 63) + b;
+                int ix = Mathf.Clamp(Mathf.FloorToInt(sx), 0, 63), iz = Mathf.Clamp(Mathf.FloorToInt(sz), 0, 63);
+                float fx = sx - ix, fz = sz - iz;
+                var hg = src.heights[0];
+                float h00 = hg[ix * 65 + iz], h10 = hg[(ix + 1) * 65 + iz], h01 = hg[ix * 65 + iz + 1], h11 = hg[(ix + 1) * 65 + iz + 1];
+                if (float.IsNaN(h00) || float.IsNaN(h10) || float.IsNaN(h01) || float.IsNaN(h11)) return false;
+                h = Mathf.Lerp(Mathf.Lerp(h00, h10, fx), Mathf.Lerp(h01, h11, fx), fz);
+                return true;
+            }
+            return false;
         }
 
         private static readonly int[] ROT_X = { 1, 0, -1, 0 };
@@ -577,7 +912,7 @@ namespace OsrsPort
 
         private void SpawnPlayer()
         {
-            foreach (var cam in FindObjectsByType<Camera>(FindObjectsSortMode.None))
+            foreach (var cam in FindObjectsByType<Camera>())
                 cam.gameObject.SetActive(false);
             var start = new Vector3(spawnTile.x, 60f, spawnTile.y);
             start.y = Physics.Raycast(start, Vector3.down, out var hit, 120f) ? hit.point.y + 0.1f : 2f;
@@ -587,6 +922,12 @@ namespace OsrsPort
             go.AddComponent<OsrsServerLink>();
             go.AddComponent<OsrsInteraction>();
             go.AddComponent<OsrsPanels>();
+            go.AddComponent<OsrsGroundItems>();
+            go.AddComponent<OsrsBank>();
+            go.AddComponent<OsrsShop>();
+            go.AddComponent<OsrsSpellbook>();
+            go.AddComponent<OsrsMinigameHud>();
+            go.AddComponent<OsrsCharacterDesign>();
             var npcs = new GameObject("Npcs");
             npcs.transform.SetParent(transform, false);
             npcs.AddComponent<OsrsNpcManager>().material = material;

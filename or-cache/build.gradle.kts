@@ -75,4 +75,28 @@ tasks {
 
 
 
+    register<JavaExec>("exportItemIcons") {
+        group = "tools"
+        description =
+            "Renders item inventory icons into osrs-port-tools/unity/Assets/StreamingAssets/items (read-only on the cache)"
+        classpath = sourceSets["main"].runtimeClasspath
+        mainClass.set("dev.openrune.tools.ItemIconExporterKt")
+        workingDir = rootProject.projectDir
+    }
+    register<JavaExec>("exportSequences") {
+        group = "tools"
+        description =
+            "Dumps sequence (animation) definitions to osrs-port-tools/unity/Assets/StreamingAssets/world/seqs.txt (read-only on the cache)"
+        classpath = sourceSets["main"].runtimeClasspath
+        mainClass.set("dev.openrune.tools.SequenceExporterKt")
+        workingDir = rootProject.projectDir
+    }
+    register<JavaExec>("exportPlayerParts") {
+        group = "tools"
+        description =
+            "Dumps identkit + worn item model info to osrs-port-tools/unity/Assets/StreamingAssets/world/player_parts.txt (read-only on the cache)"
+        classpath = sourceSets["main"].runtimeClasspath
+        mainClass.set("dev.openrune.tools.PlayerPartsExporterKt")
+        workingDir = rootProject.projectDir
+    }
 }

@@ -64,6 +64,25 @@ namespace OsrsPort
             public int[] models;
             public ushort[] recolorFrom, recolorTo, retextureFrom, retextureTo;
             public string[] ops = new string[5];
+            /// <summary>Base animation set from the cache (-1 = none).</summary>
+            public int standSeq = -1, walkSeq = -1, runSeq = -1;
+        }
+
+        /// <summary>An identkit (player body part): its models and recolours.</summary>
+        public class KitDef
+        {
+            public int id, bodyPart;
+            public int[] models;
+            public ushort[] recolorFrom, recolorTo, retextureFrom, retextureTo;
+        }
+
+        /// <summary>The worn (body) models of an equipable item, per body type, and its recolours.</summary>
+        public class WornItemDef
+        {
+            public int id;
+            public int[] male, female;
+            public int maleOffset, femaleOffset;
+            public ushort[] recolorFrom, recolorTo, retextureFrom, retextureTo;
         }
 
         /// <summary>A variant resolved to flat-shaded triangles: 9 floats and 3 colours per face.</summary>
@@ -81,6 +100,12 @@ namespace OsrsPort
         public readonly Dictionary<int, LocDef> locs = new Dictionary<int, LocDef>();
         public readonly Dictionary<(int, int, bool), int> variantIndex = new Dictionary<(int, int, bool), int>();
         public readonly Dictionary<int, NpcDef> npcs = new Dictionary<int, NpcDef>();
+        public readonly Dictionary<int, KitDef> kits = new Dictionary<int, KitDef>();
+        public readonly Dictionary<int, WornItemDef> wornItems = new Dictionary<int, WornItemDef>();
+        /// <summary>True when player_kits.txt / player_models.bin.gz were exported (players can be drawn).</summary>
+        public bool HasPlayerParts => kits.Count > 0;
+        /// <summary>Sequences, frames and vertex labels (null until loaded; check Loaded).</summary>
+        public OsrsAnimData anim;
         private readonly ConcurrentDictionary<int, VariantMesh> variantMeshes = new ConcurrentDictionary<int, VariantMesh>();
         private readonly ConcurrentDictionary<int, VariantMesh> npcMeshes = new ConcurrentDictionary<int, VariantMesh>();
         private readonly string root;
@@ -101,10 +126,46 @@ namespace OsrsPort
                 LoadModels(Path.Combine(root, "models_extra.bin.gz"));
             if (File.Exists(Path.Combine(root, "npc_models.bin.gz")))
                 LoadModels(Path.Combine(root, "npc_models.bin.gz"));
+            if (File.Exists(Path.Combine(root, "player_models.bin.gz")))
+                LoadModels(Path.Combine(root, "player_models.bin.gz"));
             for (int i = 0; i < variants.Length; i++)
                 variantIndex[(variants[i].locId, variants[i].modelType, variants[i].mirror)] = i;
             LoadLocs();
             LoadNpcs();
+            LoadPlayerParts();
+            anim = OsrsAnimData.Load(root);
+        }
+
+        /// <summary>player_kits.txt (export_player_models.py) and player_items.txt (exportPlayerParts).</summary>
+        private void LoadPlayerParts()
+        {
+            string kitPath = Path.Combine(root, "player_kits.txt");
+            if (File.Exists(kitPath))
+                foreach (var line in File.ReadLines(kitPath))
+                {
+                    if (line.Length == 0 || line[0] == '#') continue;
+                    var p = line.Split('\t');
+                    if (p.Length < 6) continue;
+                    var k = new KitDef { id = int.Parse(p[0]), bodyPart = int.Parse(p[1]), models = ParseInts(p[3]) };
+                    ParsePairs(p[4], out k.recolorFrom, out k.recolorTo);
+                    ParsePairs(p[5], out k.retextureFrom, out k.retextureTo);
+                    kits[k.id] = k;
+                }
+            string itemPath = Path.Combine(root, "player_items.txt");
+            if (File.Exists(itemPath))
+                foreach (var line in File.ReadLines(itemPath))
+                {
+                    var p = line.Split('\t');
+                    if (p.Length < 8 || p[0] != "I") continue;
+                    var w = new WornItemDef
+                    {
+                        id = int.Parse(p[1]), male = ParseInts(p[2]), female = ParseInts(p[3]),
+                        maleOffset = int.Parse(p[4]), femaleOffset = int.Parse(p[5]),
+                    };
+                    ParsePairs(p[6], out w.recolorFrom, out w.recolorTo);
+                    ParsePairs(p[7], out w.retextureFrom, out w.retextureTo);
+                    wornItems[w.id] = w;
+                }
         }
 
         private void LoadLocs()
@@ -147,7 +208,7 @@ namespace OsrsPort
                 ParsePairs(p[7], out d.recolorFrom, out d.recolorTo);
                 ParsePairs(p[8], out d.retextureFrom, out d.retextureTo);
                 var ops = p[9].Split('|');
-                for (int i = 0; i < 5 && i < ops.Length; i++) d.ops[i] = ops[i];
+                for (int i = 0; i < 5 && i < ops.Length; i++) d.ops[i] = ops[i]; if (p.Length >= 13) { int.TryParse(p[10], out d.standSeq); int.TryParse(p[11], out d.walkSeq); int.TryParse(p[12], out d.runSeq); }
                 npcs[d.id] = d;
             }
         }
@@ -354,6 +415,202 @@ namespace OsrsPort
             return mesh;
         }
 
+        // OSRS body colour recolours (client PlayerComposition tables): the default colour in each
+        // part's models is replaced by entry [chosen colour] of its row. Rows: hair, torso, legs,
+        // feet, skin. Skin only lists the 8 classic tones; other skin choices keep the default.
+        private static readonly ushort[] BodyColourFind = { 6798, 8741, 25238, 4626, 4550 };
+        private static readonly short[][] BodyColourTable =
+        {
+            new short[] { 6798, 107, 10283, 16, 4797, 7744, 5799, 4634, -31839, 22433, 2983, -11343, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010 },
+            new short[] { 8741, 12, -1506, -22374, 7735, 8404, 1701, -27106, 24094, 10153, -8915, 4783, 1341, 16578, -30533, 25239, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010 },
+            new short[] { 25238, 8742, 12, -1506, -22374, 7735, 8404, 1701, -27106, 24094, 10153, -8915, 4783, 1341, 16578, -30533, 8, 5281, 10438, 3650, -27322, -21845, 200, 571, 908, 21830, 28946, -15701, -14010 },
+            new short[] { 4626, 11146, 6439, 12, 4758, 10270 },
+            new short[] { 4550, 4537, 5681, 5673, 5790, 6806, 8076, 4574 },
+        };
+
+        /// <summary>
+        /// Builds a player's body from a resolved look: [bodyType, 5 colours, 12 slots] where a slot
+        /// is -1 (nothing), 256 + identkit id or 512 + item id (the server's PLOOK line). Each part
+        /// gets its own recolours/retextures (and item Y offset), then the body colours are applied
+        /// to the whole model like the OSRS client does. Static pose (no animation).
+        /// </summary>
+        public VariantMesh BuildPlayerMesh(int[] look)
+        {
+            var parts = new List<(int[] models, ushort[] rf, ushort[] rt, ushort[] xf, ushort[] xt, int offset)>();
+            bool female = look[0] == 1;
+            for (int s = 0; s < 12 && 6 + s < look.Length; s++)
+            {
+                int v = look[6 + s];
+                if (v >= 512)
+                {
+                    if (!wornItems.TryGetValue(v - 512, out var w)) continue;
+                    var ms = female ? w.female : w.male;
+                    parts.Add((ms, w.recolorFrom, w.recolorTo, w.retextureFrom, w.retextureTo, female ? w.femaleOffset : w.maleOffset));
+                }
+                else if (v >= 256)
+                {
+                    if (!kits.TryGetValue(v - 256, out var k)) continue;
+                    parts.Add((k.models, k.recolorFrom, k.recolorTo, k.retextureFrom, k.retextureTo, 0));
+                }
+            }
+            var bodyTo = new ushort[5];
+            for (int i = 0; i < 5; i++)
+            {
+                int c = 1 + i < look.Length ? look[1 + i] : 0;
+                var row = BodyColourTable[i];
+                bodyTo[i] = (ushort)(c >= 0 && c < row.Length ? row[c] : row[0]);
+            }
+            int faces = 0;
+            foreach (var part in parts)
+                foreach (var mid in part.models)
+                    if (mid >= 0 && models.TryGetValue(mid, out var m)) faces += m.colors.Length;
+            var mesh = new VariantMesh { positions = new float[faces * 9], colors = new Color32[faces * 3], faceCount = faces };
+            int f = 0;
+            foreach (var part in parts)
+                foreach (var mid in part.models)
+                {
+                    if (mid < 0 || !models.TryGetValue(mid, out var m)) continue;
+                    int nf = m.colors.Length;
+                    // OSRS model offset is in model units with Y pointing down; exported Y points up.
+                    float dy = -part.offset;
+                    for (int i = 0; i < nf; i++)
+                    {
+                        ushort hsl = m.colors[i];
+                        for (int k = 0; k < part.rf.Length; k++)
+                            if (hsl == part.rf[k]) { hsl = part.rt[k]; break; }
+                        for (int k = 0; k < 5; k++)
+                            if (hsl == BodyColourFind[k]) { hsl = bodyTo[k]; break; }
+                        int tex = m.textures[i];
+                        if (tex != -1)
+                            for (int k = 0; k < part.xf.Length; k++)
+                                if (tex == part.xf[k]) { tex = part.xt[k]; break; }
+                        Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
+                        int o = f * 9;
+                        for (int c = 0; c < 3; c++)
+                        {
+                            WriteVertex(mesh.positions, o + c * 3, m.positions, m.faces[i * 3 + c], false, 1f, 1f, 1f);
+                            mesh.positions[o + c * 3 + 1] += dy;
+                            mesh.colors[f * 3 + c] = col;
+                        }
+                        f++;
+                    }
+                }
+            return mesh;
+        }
+
+        // ------------------------------------------------------------------ animatable bodies
+
+        private struct AnimPart
+        {
+            public int[] models;
+            public ushort[] rf, rt, xf, xt;
+            public int offset;
+        }
+
+        /// <summary>An NPC as an animatable body, or null if animations / labels are missing.</summary>
+        public AnimMeshData BuildNpcAnimData(int npcId)
+        {
+            if (anim == null || !anim.Loaded || !npcs.TryGetValue(npcId, out var n)) return null;
+            var parts = new List<AnimPart> { new AnimPart { models = n.models, rf = n.recolorFrom, rt = n.recolorTo, xf = n.retextureFrom, xt = n.retextureTo } };
+            var d = BuildAnimData(parts, null);
+            if (d == null) return null;
+            d.sx = d.sz = n.scaleXZ / 128f;
+            d.sy = n.scaleY / 128f;
+            return d;
+        }
+
+        /// <summary>A player look (see BuildPlayerMesh) as an animatable body, or null.</summary>
+        public AnimMeshData BuildPlayerAnimData(int[] look)
+        {
+            if (anim == null || !anim.Loaded || look == null) return null;
+            var parts = new List<AnimPart>();
+            bool female = look[0] == 1;
+            for (int s = 0; s < 12 && 6 + s < look.Length; s++)
+            {
+                int v = look[6 + s];
+                if (v >= 512)
+                {
+                    if (!wornItems.TryGetValue(v - 512, out var w)) continue;
+                    parts.Add(new AnimPart { models = female ? w.female : w.male, rf = w.recolorFrom, rt = w.recolorTo, xf = w.retextureFrom, xt = w.retextureTo, offset = female ? w.femaleOffset : w.maleOffset });
+                }
+                else if (v >= 256)
+                {
+                    if (!kits.TryGetValue(v - 256, out var k)) continue;
+                    parts.Add(new AnimPart { models = k.models, rf = k.recolorFrom, rt = k.recolorTo, xf = k.retextureFrom, xt = k.retextureTo });
+                }
+            }
+            var bodyTo = new ushort[5];
+            for (int i = 0; i < 5; i++)
+            {
+                int c = 1 + i < look.Length ? look[1 + i] : 0;
+                var row = BodyColourTable[i];
+                bodyTo[i] = (ushort)(c >= 0 && c < row.Length ? row[c] : row[0]);
+            }
+            return BuildAnimData(parts, bodyTo);
+        }
+
+        /// <summary>
+        /// Welds the parts' models into one vertex list in OSRS space (Y down, item offsets applied)
+        /// with their labels, plus the same flat-shaded triangles/colours the static meshes use.
+        /// Models without exported labels still draw (all label 0).
+        /// </summary>
+        private AnimMeshData BuildAnimData(List<AnimPart> parts, ushort[] bodyTo)
+        {
+            int nu = 0, nf = 0;
+            foreach (var part in parts)
+                if (part.models != null)
+                    foreach (var mid in part.models)
+                        if (mid >= 0 && models.TryGetValue(mid, out var m)) { nu += m.positions.Length / 3; nf += m.colors.Length; }
+            if (nf == 0) return null;
+            var d = new AnimMeshData
+            {
+                bx = new int[nu], by = new int[nu], bz = new int[nu], labels = new byte[nu],
+                corner = new int[nf * 3], colors = new Color32[nf * 3],
+            };
+            int vb = 0, f = 0;
+            foreach (var part in parts)
+            {
+                if (part.models == null) continue;
+                foreach (var mid in part.models)
+                {
+                    if (mid < 0 || !models.TryGetValue(mid, out var m)) continue;
+                    int mv = m.positions.Length / 3;
+                    anim.skins.TryGetValue(mid, out var lab);
+                    for (int i = 0; i < mv; i++)
+                    {
+                        d.bx[vb + i] = m.positions[i * 3];
+                        d.by[vb + i] = -m.positions[i * 3 + 1] + part.offset;
+                        d.bz[vb + i] = m.positions[i * 3 + 2];
+                        d.labels[vb + i] = lab != null && i < lab.Length ? lab[i] : (byte)0;
+                    }
+                    int mf = m.colors.Length;
+                    for (int i = 0; i < mf; i++)
+                    {
+                        ushort hsl = m.colors[i];
+                        if (part.rf != null)
+                            for (int k = 0; k < part.rf.Length; k++)
+                                if (hsl == part.rf[k]) { hsl = part.rt[k]; break; }
+                        if (bodyTo != null)
+                            for (int k = 0; k < 5; k++)
+                                if (hsl == BodyColourFind[k]) { hsl = bodyTo[k]; break; }
+                        int tex = m.textures[i];
+                        if (tex != -1 && part.xf != null)
+                            for (int k = 0; k < part.xf.Length; k++)
+                                if (tex == part.xf[k]) { tex = part.xt[k]; break; }
+                        Color32 col = (tex != -1 && textureColors.TryGetValue(tex, out var th)) ? JagexColor.ToColor32(th) : JagexColor.ToColor32(hsl);
+                        for (int c = 0; c < 3; c++)
+                        {
+                            d.corner[f * 3 + c] = vb + m.faces[i * 3 + c];
+                            d.colors[f * 3 + c] = col;
+                        }
+                        f++;
+                    }
+                    vb += mv;
+                }
+            }
+            d.Index();
+            return d;
+        }
         private static void WriteVertex(float[] dst, int o, short[] src, int index, bool mirror, float sx, float sy, float sz)
         {
             dst[o] = src[index * 3] * sx;

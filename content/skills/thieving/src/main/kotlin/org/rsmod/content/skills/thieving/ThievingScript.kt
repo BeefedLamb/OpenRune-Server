@@ -13,7 +13,9 @@ import org.rsmod.api.repo.npc.NpcRepository
 import org.rsmod.api.script.onOpHeld1
 import org.rsmod.api.script.onOpHeld2
 import org.rsmod.api.script.onOpLoc2
+import org.rsmod.api.script.onOpNpc1
 import org.rsmod.api.script.onOpNpc3
+import org.rsmod.content.quest.manager.QuestRequirements
 import org.rsmod.game.entity.Npc
 import org.rsmod.game.hit.HitType
 import org.rsmod.game.loc.BoundLocInfo
@@ -35,11 +37,16 @@ constructor(
         for (stall in ThievingTables.stalls) {
             onOpLoc2(stall.loc) { stealFromStall(it.loc, stall) }
         }
+        val registeredPouches = HashSet<String>()
         for (target in ThievingTables.pickpockets) {
             for (npc in target.npcs) {
-                onOpNpc3(npc) { pickpocket(it.npc, target) }
+                when (target.op) {
+                    1 -> onOpNpc1(npc) { pickpocket(it.npc, target) }
+                    else -> onOpNpc3(npc) { pickpocket(it.npc, target) }
+                }
             }
             val pouch = target.pouch ?: continue
+            if (!registeredPouches.add(pouch.obj)) continue
             onOpHeld1(pouch.obj) { openPouches(pouch, all = true) }
             onOpHeld2(pouch.obj) { openPouches(pouch, all = false) }
         }
@@ -114,6 +121,10 @@ constructor(
             mes("You need to be level ${target.level} to pickpocket $owner.")
             return
         }
+        if (target.quest != null && !QuestRequirements.hasCompleted(player, target.quest)) {
+            mes("You need to complete ${target.questName ?: "a quest"} to pickpocket $owner.")
+            return
+        }
         val pouch = target.pouch
         if (pouch != null && inv.count(pouch.obj) >= MAX_POUCHES) {
             mes("You need to empty your coin pouches before you can continue pickpocketing.")
@@ -126,21 +137,28 @@ constructor(
         faceEntitySquare(npc)
         mes("You attempt to pick $owner's pocket.", ChatType.Spam)
         delay(1)
-        if (!statRandom(THIEVING, target.lowChance, target.highChance, invisibleBoost = 0)) {
+        val multiplier = successMultiplier()
+        val low = (target.lowChance * multiplier).toInt().coerceAtMost(MAX_CHANCE)
+        val high = (target.highChance * multiplier).toInt().coerceAtMost(MAX_CHANCE)
+        if (!statRandom(THIEVING, low, high, invisibleBoost = 0)) {
             failPickpocket(npc, target, owner)
             return
         }
         mes("You pick $owner's pocket.", ChatType.Spam)
         anim(PICKPOCKET_SEQ)
         soundSynth(PICK_SYNTH)
-        if (pouch != null) {
-            invAdd(inv, pouch.obj)
-        }
-        val loot = target.loot?.roll(random)
-        if (loot != null) {
-            val count = random.of(loot.min, loot.max)
-            invAdd(inv, loot.obj, count)
-            mes("You steal ${describe(loot.obj, count)}.", ChatType.Spam)
+        val rolls = if (rollsDoubleLoot()) 2 else 1
+        if (rolls > 1) mes("Your rogue clothing allows you to steal twice as much loot!", ChatType.Spam)
+        repeat(rolls) {
+            if (pouch != null) {
+                invAdd(inv, pouch.obj)
+            }
+            val loot = target.loot?.rollOrNull(random)
+            if (loot != null) {
+                val count = random.of(loot.min, loot.max)
+                invAdd(inv, loot.obj, count)
+                mes("You steal ${describe(loot.obj, count)}.", ChatType.Spam)
+            }
         }
         statAdvance(THIEVING, target.xp)
     }
@@ -148,7 +166,9 @@ constructor(
     private fun ProtectedAccess.openPouches(pouch: CoinPouch, all: Boolean) {
         val count = if (all) inv.count(pouch.obj) else 1
         if (count == 0 || invDel(inv, pouch.obj, count).failure) return
-        invAdd(inv, COINS, count * pouch.coins)
+        var coins = 0
+        repeat(count) { coins += random.of(pouch.coins, pouch.coinsMax) }
+        invAdd(inv, COINS, coins)
         val message = if (count > 1) "You open all of the pouches." else "You open the coin pouch."
         mes(message, ChatType.Spam)
     }
@@ -166,9 +186,34 @@ constructor(
         spotanim(STUN_SPOTANIM, height = STUN_SPOTANIM_HEIGHT)
         anim(STUN_BLOCK_SEQ)
         soundSynth(STUN_SYNTH)
-        queueHit(delay = 1, type = HitType.Typeless, damage = target.stunDamage)
+        queueHit(delay = 1, type = HitType.Typeless, damage = random.of(target.stunDamage, target.stunMax))
         delay(1)
         mes("You've been stunned!", ChatType.Spam)
+    }
+
+    /**
+     * OSRS pickpocket success modifiers (multiplicative on the success chance):
+     * gloves of silence +5%, Thieving cape (or trimmed / max cape) +10%, and any Ardougne
+     * cloak +10% while inside Ardougne. Ardougne diary double-loot needs diary tracking,
+     * which this server does not have yet.
+     */
+    private fun ProtectedAccess.successMultiplier(): Double {
+        var multiplier = 1.0
+        if (player.worn.count(GLOVES_OF_SILENCE) > 0) multiplier *= 1.05
+        if (THIEVING_CAPES.any { player.worn.count(it) > 0 }) multiplier *= 1.10
+        if (ARDY_CLOAKS.any { player.worn.count(it) > 0 } && inArdougne()) multiplier *= 1.10
+        return multiplier
+    }
+
+    private fun ProtectedAccess.inArdougne(): Boolean {
+        val c = player.coords
+        return c.level == 0 && c.x in 2430..2690 && c.z in 3255..3345
+    }
+
+    /** Each rogue piece gives a 20% chance of double loot; the full set guarantees it. */
+    private fun ProtectedAccess.rollsDoubleLoot(): Boolean {
+        val pieces = ROGUE_SET.count { player.worn.count(it) > 0 }
+        return pieces > 0 && random.of(0, 99) < pieces * 20
     }
 
     private fun ProtectedAccess.stun() {
@@ -207,5 +252,19 @@ constructor(
         const val FREEZE_TIMER = "timer.combat_freeze"
         const val MAX_POUCHES = 28
         const val COINS = "obj.coins"
+        const val MAX_CHANCE = 255
+        const val GLOVES_OF_SILENCE = "obj.hunting_silent_gloves"
+        val THIEVING_CAPES =
+            listOf("obj.skillcape_thieving", "obj.skillcape_thieving_trimmed", "obj.skillcape_max_ardy")
+        val ARDY_CLOAKS =
+            listOf(
+                "obj.ardy_cape_easy", "obj.ardy_cape_medium", "obj.ardy_cape_hard",
+                "obj.ardy_cape_elite", "obj.skillcape_max_ardy",
+            )
+        val ROGUE_SET =
+            listOf(
+                "obj.roguesden_helm", "obj.roguesden_body", "obj.roguesden_legs",
+                "obj.roguesden_gloves", "obj.roguesden_boots",
+            )
     }
 }

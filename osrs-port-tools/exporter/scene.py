@@ -139,40 +139,62 @@ class Scene:
             return None
         return rgb24(o.rgb)
 
-    def build_terrain(self, x0, y0, x1, y1, out):
-        for z in range(4):
-            blend = self._blended_underlay(z, x0, y0, x1 + 1, y1 + 1)
+    def is_bridge(self, wx, wy):
+        """OSRS bridge flag: settings[1] & 0x2 on a tile shifts every plane >= 1 of that
+        tile down one render level (client MapLoader: `if (settings[1][x][y] & 2) level--`)."""
+        s = self._tile("settings", 1, wx, wy)
+        return bool(s and (s & 0x2))
+
+    def display_level(self, level, wx, wy):
+        """Plane a loc/tile at `level` is drawn and walked on, after the bridge shift."""
+        return level - 1 if level > 0 and self.is_bridge(wx, wy) else level
+
+    def build_terrain(self, x0, y0, x1, y1, out, planes=range(4)):
+        for z in planes:
+            blends = {}
             for wx in range(x0, x1 + 1):
                 for wy in range(y0, y1 + 1):
-                    u = self._tile("underlay", z, wx, wy)
-                    o = self._tile("overlay", z, wx, wy)
-                    if u is None or (not u and not o):
-                        continue
-                    corners = [(wx, wy), (wx + 1, wy), (wx + 1, wy + 1), (wx, wy + 1)]
-                    pos = [(cx * 128, self.height(z, cx, cy), cy * 128) for cx, cy in corners]
-                    under = [blend.get(c) or blend.get((wx, wy)) for c in corners] if u else None
-                    over = self._overlay_color(o) if o else None
-                    path = self._tile("path", z, wx, wy)
-                    rot = self._tile("rot", z, wx, wy)
-                    tris = ((0, 1, 2), (0, 2, 3))
-                    if over is None or path == 0:
-                        if over is not None:
-                            for t in tris:
-                                out.add_tri([pos[i] for i in t], [over] * 3)
-                        elif under:
-                            for t in tris:
-                                out.add_tri([pos[i] for i in t], [under[i] for i in t])
-                        continue
-                    # Shaped overlay (paths, coastlines): approximate by splitting the tile
-                    # along a diagonal chosen by the rotation; overlay on one half.
-                    a = rot & 3
-                    tri_over = ((a, (a + 1) & 3, (a + 2) & 3),)
-                    tri_under = ((a, (a + 2) & 3, (a + 3) & 3),)
-                    for t in tri_over:
-                        out.add_tri([pos[i] for i in t], [over] * 3)
-                    if under:
-                        for t in tri_under:
-                            out.add_tri([pos[i] for i in t], [under[i] for i in t])
+                    # Bridge tiles: render level z shows source plane z+1 (the deck, at its
+                    # own heights); on level 0 plane 0's surface (ground under it) stays too.
+                    if self.is_bridge(wx, wy):
+                        srcs = ([0] if z == 0 else []) + ([z + 1] if z + 1 < 4 else [])
+                    else:
+                        srcs = [z]
+                    for sz in srcs:
+                        if sz not in blends:
+                            blends[sz] = self._blended_underlay(sz, x0, y0, x1 + 1, y1 + 1)
+                        self._terrain_tile(sz, wx, wy, blends[sz], out)
+
+    def _terrain_tile(self, z, wx, wy, blend, out):
+        u = self._tile("underlay", z, wx, wy)
+        o = self._tile("overlay", z, wx, wy)
+        if u is None or (not u and not o):
+            return
+        corners = [(wx, wy), (wx + 1, wy), (wx + 1, wy + 1), (wx, wy + 1)]
+        pos = [(cx * 128, self.height(z, cx, cy), cy * 128) for cx, cy in corners]
+        under = [blend.get(c) or blend.get((wx, wy)) for c in corners] if u else None
+        over = self._overlay_color(o) if o else None
+        path = self._tile("path", z, wx, wy)
+        rot = self._tile("rot", z, wx, wy)
+        tris = ((0, 1, 2), (0, 2, 3))
+        if over is None or path == 0:
+            if over is not None:
+                for t in tris:
+                    out.add_tri([pos[i] for i in t], [over] * 3)
+            elif under:
+                for t in tris:
+                    out.add_tri([pos[i] for i in t], [under[i] for i in t])
+            return
+        # Shaped overlay (paths, coastlines): approximate by splitting the tile
+        # along a diagonal chosen by the rotation; overlay on one half.
+        a = rot & 3
+        tri_over = ((a, (a + 1) & 3, (a + 2) & 3),)
+        tri_under = ((a, (a + 2) & 3, (a + 3) & 3),)
+        for t in tri_over:
+            out.add_tri([pos[i] for i in t], [over] * 3)
+        if under:
+            for t in tri_under:
+                out.add_tri([pos[i] for i in t], [under[i] for i in t])
 
     # ------------------------------------------------------------ locs
     def _loc_model(self, d, ltype, orient):

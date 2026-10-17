@@ -8,7 +8,7 @@ from cache import Buf
 
 class Model:
     __slots__ = ("vx", "vy", "vz", "f1", "f2", "f3", "colors", "render_types",
-                 "alphas", "textures")
+                 "alphas", "textures", "vskins")
 
     def copy(self):
         m = Model()
@@ -18,6 +18,7 @@ class Model:
         m.render_types = list(self.render_types) if self.render_types else None
         m.alphas = list(self.alphas) if self.alphas else None
         m.textures = list(self.textures) if self.textures else None
+        m.vskins = list(self.vskins) if getattr(self, 'vskins', None) else None
         return m
 
     # ---- transforms (same maths as the client) ----
@@ -151,6 +152,7 @@ def decode_type3(data):
     f1, f2, f3 = _decode_faces(data, face_idx_off, face_idx_type_off, fc)
     m.vx, m.vy, m.vz, m.f1, m.f2, m.f3 = vx, vy, vz, f1, f2, f3
     m.colors, m.render_types, m.alphas, m.textures = colors, rt, al, tx
+    m.vskins = _vskins(data, vskin_off, vc, has_vskin, has_maya)
     return m
 
 
@@ -227,7 +229,15 @@ def decode_type2(data):
     m.vx, m.vy, m.vz, m.f1, m.f2, m.f3 = vx, vy, vz, f1, f2, f3
     m.colors, m.render_types, m.alphas = colors, rt, al
     m.textures = tx if tx and any(t != -1 for t in tx) else None
+    m.vskins = _vskins(data, vskin_off, vc, has_vskin, has_maya)
     return m
+
+
+def _vskins(data, off, vc, has_vskin, has_maya):
+    """Per-vertex labels (vertex skins) that animation frame-bases transform; None if absent."""
+    if has_vskin != 1 or has_maya == 1:
+        return None
+    return list(data[off:off + vc])
 
 
 def _decode_faces(data, idx_off, type_off, fc):

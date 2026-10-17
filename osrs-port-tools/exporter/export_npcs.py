@@ -2,7 +2,8 @@
 
 Usage: python3 export_npcs.py <cache_dir> <out_dir>
 Writes <out_dir>/world/npcs.txt (one NPC per line, tab-separated:
-  id, name, size, combatLevel, scaleXZ, scaleY, models(comma), recolors(a:b,...), op1|op2|op3|op4|op5)
+  id, name, size, combatLevel, scaleXZ, scaleY, models(comma), recolors(a:b,...), retextures,
+  op1|op2|op3|op4|op5, standSeq, walkSeq, runSeq  (-1 = none))
 and <out_dir>/world/npc_models.bin.gz in the same format as models.bin.gz.
 locs.txt is written by export_extra_variants.py.
 """
@@ -32,6 +33,7 @@ class NpcDef:
         self.ops = [""] * 5
         self.morphs = None
         self.visible = True
+        self.stand = self.walk = self.run = -1
 
 
 def decode_npc(nid, data):
@@ -48,10 +50,21 @@ def decode_npc(nid, data):
             d.name = b.string()
         elif op == 12:
             d.size = b.u8()
-        elif op in (13, 14, 15, 16, 18, 103, 114, 116, 124, 126, 146):
+        elif op == 13:
+            d.stand = _seq(b.u16())
+        elif op == 14:
+            d.walk = _seq(b.u16())
+        elif op == 114:
+            d.run = _seq(b.u16())
+        elif op in (15, 16, 18, 103, 116, 124, 126, 146):
             b.u16()
         elif op in (17, 115, 117):
-            b.u16(); b.u16(); b.u16(); b.u16()
+            first = _seq(b.u16())
+            if op == 17:
+                d.walk = first
+            elif op == 115:
+                d.run = first
+            b.u16(); b.u16(); b.u16()
         elif 30 <= op < 35:
             t = b.string()
             d.ops[op - 30] = "" if t.lower() == "hidden" else t
@@ -124,6 +137,10 @@ def decode_npc(nid, data):
     return d
 
 
+def _seq(v):
+    return -1 if v == 0xFFFF else v
+
+
 def write_models_to(path, cache, ids):
     mc = ModelCache(cache)
     with gzip.open(path, "wb", 6) as f:
@@ -176,6 +193,7 @@ def main():
                 ",".join(f"{a}:{b}" for a, b in d.recolor),
                 ",".join(f"{a}:{b}" for a, b in d.retexture),
                 "|".join(o.replace("|", "/") for o in d.ops),
+                str(d.stand), str(d.walk), str(d.run),
             ]) + "\n")
     write_models_to(os.path.join(out, "npc_models.bin.gz"), cache, models)
     print(f"npcs {len(npcs)} (bad {bad}), npc models {len(models)}")

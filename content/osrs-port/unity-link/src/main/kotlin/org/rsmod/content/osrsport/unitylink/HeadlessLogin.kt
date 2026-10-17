@@ -40,6 +40,11 @@ constructor(
     ): Boolean =
         accountManager.loadOrCreate(AccountLoadAuth.UnknownDevice, name, { PASSWORD_HASH }) { response ->
             if (response !is AccountLoadResponse.Ok) {
+                if (response is AccountLoadResponse.Err.Exception) {
+                    logger.error(response.reason) { "Headless login: account load failed for '$name'" }
+                } else {
+                    logger.warn { "Headless login: account load failed for '$name': $response" }
+                }
                 failed("could not load account: ${response::class.simpleName}")
                 return@loadOrCreate
             }

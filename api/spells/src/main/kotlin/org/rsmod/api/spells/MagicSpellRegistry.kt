@@ -20,6 +20,14 @@ public class MagicSpellRegistry {
 
     public fun getObjSpell(obj: ItemServerType): MagicSpell? = objSpells[obj.id]
 
+    /**
+     * Resolves a spell obj that is not listed directly in a spellbook enum (e.g. the Lvl-1..7
+     * Enchant spells that live in the 'Jewellery Enchantments' sub-menu). Returns null if the obj
+     * has no spell params.
+     */
+    public fun getOrLoadObjSpell(obj: ItemServerType): MagicSpell? =
+        objSpells[obj.id] ?: runCatching { obj.toMagicSpell() }.getOrNull()
+
     public fun getAutocastSpell(autocastId: Int): MagicSpell? = autocastSpells[autocastId]
 
     public fun allSpells(): Collection<MagicSpell> = objSpells.values

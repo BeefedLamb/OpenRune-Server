@@ -11,10 +11,14 @@ import kotlin.math.max
 import net.rsprot.protocol.game.outgoing.zone.payload.LocAddChangeV2
 import net.rsprot.protocol.game.outgoing.zone.payload.LocDel
 import org.rsmod.api.game.process.GameLifecycle
+import org.rsmod.api.player.events.FarmingPatchEvent
+import org.rsmod.api.player.events.HouseLayoutEvent
+import org.rsmod.api.player.events.MinigameOverlayEvent
 import org.rsmod.api.player.events.PlayerHitEvents
 import org.rsmod.api.player.interact.HeldInteractions
 import org.rsmod.api.player.interact.LocInteractions
 import org.rsmod.api.player.interact.NpcInteractions
+import org.rsmod.api.player.interact.ObjInteractions
 import org.rsmod.api.player.interact.WornInteractions
 import org.rsmod.api.player.output.mes
 import org.rsmod.api.player.protect.ProtectedAccessLauncher
@@ -30,6 +34,7 @@ import org.rsmod.api.player.vars.intVarp
 import org.rsmod.api.registry.loc.LocRegistry
 import org.rsmod.api.registry.zone.ZoneUpdateMap
 import org.rsmod.api.repo.npc.NpcRepository
+import org.rsmod.api.repo.obj.ObjRepository
 import org.rsmod.api.script.onCommand
 import org.rsmod.api.script.onEvent
 import org.rsmod.api.specials.SpecialAttack
@@ -69,10 +74,60 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * Dialogues arrive as `DLG ...` lines (see [LinkClient]); the backpack, equipment and skills as
  * `INV slot|id|count|name|op1/../op5;...`, `WORN ...` (same shape) and `STATS id|name|level|base|xp;...`.
  * Server -> client: `WELCOME x z level`, `TILE x z level`, `MSG type text`, `ME hp maxHp spec`,
- * `HIT me|npc index damage`, `NPCS n idx,id,x,z,level,hp,maxHp;...`,
+ * `HIT me 0 damage` (a hit on the link player), `HIT npc index damage mine` (a player's hit on a
+ * nearby npc, 0 = miss/block; mine is 1 when this link player dealt it), `NDIE index` (that hit
+ * killed the npc), `NPCS n idx,id,x,z,level,hp,maxHp;...`,
  * `PLAYERS slot|name|x|z|level|hp|maxHp|anim;...` (other players, i.e. bots), `ANIM seq` (player
- * animation), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
+ * animation), `BAS key ready turn walkF walkB walkL walkR run` (base stand/walk/run seqs of the
+ * link player `me` or another player's slot, on change), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
  * `LOC del x z level shape rot`, `ERROR text`.
+ *
+ * Ground items: `GITEMS id|count|x|z|level|name;...` is the full list of ground items the link
+ * player can see (own private drops/loot plus public ones) on its floor within GROUND_ZONE_RADIUS
+ * zones; it is re-sent only when it changes. The client picks one up with `TAKE id x z level`,
+ * which runs the obj's Take op (the normal ObjTakePlugin path) from up to one tile away.
+ *
+ * Bank: use a bank booth (OPLOC, op "Bank") or a banker (OPNPC, op "Bank") to open the real
+ * server bank. The server then sends `BANKOPEN`, `BANKNOTE 0|1` and `BANK slot|id|count|name|ops;...`
+ * (re-sent on change) until `BANKCLOSE`. The client sends `WITHDRAW slot id count` /
+ * `DEPOSIT slot id count` (bank slot / backpack slot; count 1, 5, 10, any positive X, or -1 = all),
+ * `DEPOSITALL`, `DEPOSITWORN`, `BANKNOTE 0|1` and `BANKCLOSE`. See [LinkBank].
+ *
+ * Shops: a shopkeeper's "Trade" op opens the real server shop. The server sends `SHOPOPEN`,
+ * `SHOP currency;slot|id|count|name|price;...` (re-sent on change) until `SHOPCLOSE`. The client
+ * sends `BUY slot id count` / `SELL slot id count` (count 1, 5, 10, 50), `SHOPVALUE 0|1 slot id`
+ * and `SHOPCLOSE`. See [LinkShop].
+ *
+ * Spellbook: `SPELLS book;objId|name|level|type|target|levelOk|runesOk|runes;...` lists the current
+ * spellbook (re-sent on change); the client casts with `CAST objId` or `CAST objId slot` (spell on a
+ * backpack item). Casts replay the real spellbook interface events. See [LinkSpells].
+ *
+ * Minigames: `MGOVERLAY title;key|value;...` is the live status of the minigame the player is
+ * working in (Wintertodt, Tempoross, Giants' Foundry, GotR), pushed by those scripts through
+ * [MinigameOverlayEvent]; a bare `MGOVERLAY` hides it.
+ *
+ * Farming patches: `PATCH x z level variantLocId baseLocId value shape rot` (per patch, on change).
+ * Player-owned house: `HOUSE level;dstX|dstZ|srcX|srcZ|rot|name;...` (bare `HOUSE` = left) and
+ * `HLOCS id|x|z|level|shape|rot;...` (all house locs). See [LinkGeometry].
+ *
+ * Stuns/freezes: `FROZEN 1` when the link player becomes frozen (e.g. a failed pickpocket stun,
+ * or a bind spell) and `FROZEN 0` when it wears off. While frozen the server ignores `POS` moves
+ * and re-sends `TILE` so the client snaps back.
+ *
+ * Character Design (OSRS Tutorial Island style): the login name from `HELLO` becomes the display
+ * name. Right after `WELCOME`, an account without a saved look gets `KITS slot aIds bIds` (x7,
+ * slots hair jaw torso arms hands legs feet; comma-separated legal identkit ids for body type A
+ * and B, `-` if none), `LOOK ...` (current/default look) and `CREATE displayName`. The client
+ * shows its design screen and answers `APPEAR bodyType hair jaw torso arms hands legs feet
+ * colHair colTorso colLegs colFeet colSkin` (13 ints; bodyType 0 = A/male, 1 = B/female; colours
+ * 0..24, 0..28, 0..28, 0..5, 0..13). The server sanitises it, saves it and replies `LOOK ...` then
+ * `CREATED`. Accounts that already have a saved look just get `LOOK ...` after `WELCOME`, and
+ * `APPEAR` is ignored for them.
+ *
+ * Player bodies: `PLOOK key bodyType colHair colTorso colLegs colFeet colSkin s0 .. s11` gives the
+ * resolved 12-slot appearance of the link player (key `me`) or of another player (key = its
+ * `PLAYERS` slot), sent before/with `PLAYERS` and re-sent only when it changes. Slot values: -1
+ * nothing, 256 + identkit id, 512 + item id. See [LinkAppearance].
  *
  * The Unity client owns the player's position: the server never walks the link player, it only
  * teleports it where Unity says it stands. Interactions therefore work by range checks, not by
@@ -96,9 +151,18 @@ constructor(
     private val heldInteractions: HeldInteractions,
     private val wornInteractions: WornInteractions,
     private val protectedAccess: ProtectedAccessLauncher,
+    private val objRepo: ObjRepository,
+    private val objInteractions: ObjInteractions,
+    private val locTInteractions: org.rsmod.api.player.interact.LocTInteractions,
+    private val spellRegistry: org.rsmod.api.spells.MagicSpellRegistry,
+    private val runeManager: org.rsmod.api.combat.manager.MagicRuneManager,
 ) : PluginScript() {
     private val server = UnityLinkServer(LINK_PORT)
     private val connections = LinkedHashSet<LinkConnection>()
+    private val bank = LinkBank(eventBus, protectedAccess)
+    private val shop = LinkShop(eventBus, protectedAccess)
+    private val geometry = LinkGeometry(locRegistry)
+    private val spells by lazy { LinkSpells(eventBus, protectedAccess, spellRegistry, runeManager) }
     private var currentTick = 0
 
     override fun ScriptContext.startup() {
@@ -118,6 +182,17 @@ constructor(
         onEvent<PlayerHitEvents.Impact> {
             connectionOf(player)?.send("HIT me 0 ${hit.damage}")
         }
+        onEvent<LinkNpcHit> { npcHit(this) }
+        onEvent<MinigameOverlayEvent> {
+            val connection = connectionOf(player) ?: return@onEvent
+            val line = overlayLine(this)
+            if (line != connection.lastOverlayLine) {
+                connection.lastOverlayLine = line
+                connection.send(line)
+            }
+        }
+        onEvent<FarmingPatchEvent> { connectionOf(player)?.let { geometry.patches(it, this) } }
+        onEvent<HouseLayoutEvent> { connectionOf(player)?.let { geometry.house(it, this) } }
         onEvent<HeadlessChat> {
             for (connection in connections) {
                 connection.send("MSG 2 ${player.displayName}: $text")
@@ -152,6 +227,32 @@ constructor(
         server.stop()
     }
 
+    /** Tells every link player who can see the npc about the hit, and about the kill. */
+    private fun npcHit(event: LinkNpcHit) {
+        val npc = event.npc
+        val dead = npc.hitpoints <= 0
+        for (connection in connections) {
+            val player = connection.player ?: continue
+            if (player.coords.level != npc.coords.level || chebyshev(player.coords, npc.coords) > PLAYER_VIEW_RANGE) {
+                continue
+            }
+            val mine = if (event.source === player) 1 else 0
+            connection.send("HIT npc ${npc.slotId} ${event.damage} $mine")
+            if (dead) {
+                connection.send("NDIE ${npc.slotId}")
+            }
+        }
+    }
+
+    /** `MGOVERLAY title;key|value;...`, or a bare `MGOVERLAY` to hide the minigame HUD. */
+    private fun overlayLine(event: MinigameOverlayEvent): String {
+        if (event.title.isEmpty()) return "MGOVERLAY"
+        fun clean(s: String) = s.replace('|', '/').replace(';', ',').replace('\n', ' ')
+        val sb = StringBuilder("MGOVERLAY ").append(clean(event.title))
+        for ((k, v) in event.values) sb.append(';').append(clean(k)).append('|').append(clean(v))
+        return sb.toString()
+    }
+
     private fun connectionOf(player: Player): LinkConnection? =
         connections.firstOrNull { it.player === player }
 
@@ -172,13 +273,27 @@ constructor(
             is LinkCommand.Hello -> beginLogin(connection, command.name)
             is LinkCommand.Position -> move(connection, command.x, command.z, command.level)
             is LinkCommand.OpLoc -> opLoc(connection, command)
+            is LinkCommand.OpLocU -> opLocU(connection, command)
             is LinkCommand.OpNpc -> opNpc(connection, command)
+            is LinkCommand.Appear -> appear(connection, command.values)
             is LinkCommand.Stop -> stop(connection)
             is LinkCommand.Chat -> chat(connection, command.text)
             is LinkCommand.Special -> armSpecial(connection)
             is LinkCommand.Block -> connection.blocking = command.blocking
             is LinkCommand.Dodge -> connection.dodgeUntilTick = currentTick + DODGE_TICKS
             is LinkCommand.OpItem -> opItem(connection, command)
+            is LinkCommand.Take -> take(connection, command)
+            is LinkCommand.BankItem -> bankItem(connection, command)
+            is LinkCommand.BankDepositAll -> connection.player?.let { bank.depositAll(connection, it, command.worn) }
+            is LinkCommand.BankNote -> connection.player?.let { bank.setNoteMode(connection, it, command.note) }
+            is LinkCommand.BankClose -> connection.player?.let { bank.close(it) }
+            is LinkCommand.ShopItem -> connection.player?.let {
+                if (command.sell) shop.sell(connection, it, command.slot, command.id, command.count)
+                else shop.buy(connection, it, command.slot, command.id, command.count)
+            }
+            is LinkCommand.ShopValue -> connection.player?.let { shop.value(connection, it, command.side, command.slot, command.id) }
+            is LinkCommand.ShopClose -> connection.player?.let { shop.close(it) }
+            is LinkCommand.Cast -> connection.player?.let { spells.cast(connection, it, command.spellObj, command.slot) }
             is LinkCommand.DialogueContinue -> resumeDialogue(connection, -1)
             is LinkCommand.DialogueSelect -> resumeDialogue(connection, command.option)
             is LinkCommand.Bye -> {
@@ -230,7 +345,32 @@ constructor(
         val c = player.coords
         connection.send("WELCOME ${c.x} ${c.z} ${c.level}")
         connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl} ${player.specialEnergy}")
+        if (CharacterDesign.restore(player)) {
+            connection.send(CharacterDesign.lookLine(player))
+        } else {
+            CharacterDesign.kitLines().forEach(connection::send)
+            connection.send(CharacterDesign.lookLine(player))
+            connection.send("CREATE ${player.displayName}")
+        }
         logger.info { "Unity link: ${player.username} logged in at $c (slot ${player.slotId})" }
+    }
+
+    /**
+     * Character Design: only accepted while the account has no saved look (a new account, or one
+     * from before looks were saved). Afterwards the look is fixed and APPEAR is ignored.
+     */
+    private fun appear(connection: LinkConnection, values: List<Int>) {
+        val player = connection.player ?: return
+        if (CharacterDesign.hasDesigned(player)) {
+            connection.send("MSG 0 Your appearance is already set.")
+            return
+        }
+        val look = CharacterDesign.sanitise(player, values) ?: return
+        CharacterDesign.apply(player, look)
+        CharacterDesign.save(player, look)
+        connection.send(CharacterDesign.lookLine(player))
+        connection.send("CREATED")
+        logger.info { "Unity link: ${player.username} designed character $look" }
     }
 
     // ------------------------------------------------------------------ movement
@@ -241,6 +381,19 @@ constructor(
             return
         }
         val dest = CoordGrid(x, z, level)
+        if (player.isFrozen && dest != player.coords) {
+            // Stunned/bound: refuse the move and snap the client back to where the server holds it.
+            connection.clientTile = player.coords
+            connection.lastSentTile = null
+            return
+        }
+        if (player.isDelayed && dest != player.coords) {
+            // Mid-script (agility obstacle, climb, ...): the server owns the position until the
+            // delay ends. Refuse the move and make Unity snap to the server tile.
+            connection.clientTile = player.coords
+            forceMove(connection, player.coords)
+            return
+        }
         connection.clientTile = dest
         if (player.coords == dest || !collision.isZoneValid(dest)) {
             return
@@ -298,6 +451,43 @@ constructor(
                 op = op,
                 hasOpTrigger = locInteractions.hasOpTrigger(player, bound, op, type),
                 hasApTrigger = locInteractions.hasApTrigger(player, bound, op, type),
+            )
+        player.clearPendingAction(eventBus)
+        player.resetFaceEntity()
+        player.faceLoc(loc, type.width, type.length)
+        player.interaction = interaction
+    }
+
+    /** Use the item in backpack slot [LinkCommand.OpLocU.slot] on a loc (seeds on patches, etc.). */
+    private fun opLocU(connection: LinkConnection, command: LinkCommand.OpLocU) {
+        val player = connection.player ?: return
+        if (player.isDelayed) {
+            return
+        }
+        val obj = player.inv[command.slot] ?: return
+        val objType = ServerCacheManager.getItem(obj.id) ?: return
+        val coords = CoordGrid(command.x, command.z, command.level)
+        val loc = locRegistry.findType(coords, command.locId)
+        if (loc == null) {
+            connection.send("MSG 0 Nothing interesting happens.")
+            return
+        }
+        val type = ServerCacheManager.getObject(command.locId) ?: return
+        val bound = BoundLocInfo(loc, type)
+        if (distanceToLoc(player.coords, bound) > OP_RANGE) {
+            connection.send("MSG 0 You need to get closer.")
+            return
+        }
+        val component =
+            ServerCacheManager.fromComponent("component.inventory:items")
+        val interaction =
+            org.rsmod.game.interact.InteractionLocT(
+                objType = objType,
+                component = component,
+                comsub = command.slot,
+                target = bound,
+                hasOpTrigger = locTInteractions.hasOpTrigger(player, bound, type, objType, component, command.slot),
+                hasApTrigger = locTInteractions.hasApTrigger(player, bound, type, objType, component, command.slot),
             )
         player.clearPendingAction(eventBus)
         player.resetFaceEntity()
@@ -383,6 +573,38 @@ constructor(
         }
     }
 
+    /** Picks up a ground item through its normal "Take" op (op 3), like clicking it in OSRS. */
+    private fun take(connection: LinkConnection, command: LinkCommand.Take) {
+        val player = connection.player ?: return
+        if (player.isDelayed || player.isAccessProtected) {
+            return
+        }
+        val coords = CoordGrid(command.x, command.z, command.level)
+        val obj = objRepo.findAll(coords).firstOrNull { it.type == command.id && it.isVisibleTo(player) }
+        if (obj == null) {
+            connection.send("MSG 0 Too late - it's gone!")
+            return
+        }
+        if (player.coords.level != coords.level || chebyshev(player.coords, coords) > OP_RANGE) {
+            connection.send("MSG 0 You need to get closer.")
+            return
+        }
+        val trigger = objInteractions.opTrigger(obj, InteractionOp.Op3)
+        if (trigger == null) {
+            connection.send("MSG 0 Nothing interesting happens.")
+            return
+        }
+        player.clearPendingAction(eventBus)
+        player.clearInteraction()
+        protectedAccess.launch(player) { eventBus.publish(this, trigger) }
+    }
+
+    private fun bankItem(connection: LinkConnection, command: LinkCommand.BankItem) {
+        val player = connection.player ?: return
+        if (command.deposit) bank.deposit(connection, player, command.slot, command.id, command.count)
+        else bank.withdraw(connection, player, command.slot, command.id, command.count)
+    }
+
     private fun heldOp(op: Int): HeldOp? =
         when (op) {
             1 -> HeldOp.Op1
@@ -449,6 +671,9 @@ constructor(
 
     // ------------------------------------------------------------------ per-tick sync
 
+    /** Seq id for the link protocol: [EntitySeq.ZERO] is the engine's "reset animation" (-1). */
+    private fun linkSeqId(seq: EntitySeq): Int = if (seq == EntitySeq.ZERO) -1 else seq.id
+
     private fun syncClients() {
         for (connection in connections) {
             val player = connection.player ?: continue
@@ -471,12 +696,32 @@ constructor(
                 connection.send("ME $hp $maxHp $spec")
             }
             if (player.pendingSequence != EntitySeq.NULL) {
-                connection.send("ANIM ${player.pendingSequence.id}")
+                connection.send("ANIM ${linkSeqId(player.pendingSequence)}")
+            }
+            val selfLook = LinkAppearance.line("me", player)
+            if (selfLook != connection.lastSelfLook) {
+                connection.lastSelfLook = selfLook
+                connection.send(selfLook)
+            }
+            val selfBas = LinkBas.line("me", player)
+            if (selfBas != connection.lastSelfBas) {
+                connection.lastSelfBas = selfBas
+                connection.send(selfBas)
             }
             sendNpcs(connection, player)
             sendPlayers(connection, player)
             sendLocs(connection, player)
             sendInventories(connection, player)
+            sendGroundItems(connection, player)
+            bank.sync(connection, player, ::inventoryLine)
+            shop.sync(connection, player)
+            spells.sync(connection, player, currentTick)
+            geometry.sync(connection, player)
+            val frozen = player.isFrozen
+            if (frozen != connection.frozen) {
+                connection.frozen = frozen
+                connection.send("FROZEN ${if (frozen) 1 else 0}")
+            }
         }
     }
 
@@ -489,7 +734,17 @@ constructor(
                 continue
             }
             val c = other.coords
-            val anim = if (other.pendingSequence != EntitySeq.NULL) other.pendingSequence.id else -1
+            val look = LinkAppearance.line(other.slotId.toString(), other)
+            if (connection.lastLooks[other.slotId] != look) {
+                connection.lastLooks[other.slotId] = look
+                connection.send(look)
+            }
+            val bas = LinkBas.line(other.slotId.toString(), other)
+            if (connection.lastBas[other.slotId] != bas) {
+                connection.lastBas[other.slotId] = bas
+                connection.send(bas)
+            }
+            val anim = if (other.pendingSequence != EntitySeq.NULL) linkSeqId(other.pendingSequence) else -1
             sb.append(other.slotId).append('|').append(other.displayName.replace('|', ' ')).append('|')
                 .append(c.x).append('|').append(c.z).append('|').append(c.level).append('|')
                 .append(other.hitpoints).append('|').append(other.baseHitpointsLvl).append('|').append(anim).append(';')
@@ -530,6 +785,31 @@ constructor(
         }
     }
 
+    /** Ground items this player can see on its floor nearby (loot, drops, item spawns). */
+    private fun sendGroundItems(connection: LinkConnection, player: Player) {
+        val me = player.coords
+        val centre = ZoneKey.from(me)
+        val sb = StringBuilder("GITEMS ")
+        var shown = 0
+        loop@ for (dx in -GROUND_ZONE_RADIUS..GROUND_ZONE_RADIUS) {
+            for (dz in -GROUND_ZONE_RADIUS..GROUND_ZONE_RADIUS) {
+                for (obj in objRepo.findAll(centre.translate(dx, dz))) {
+                    if (obj.level != me.level || !obj.isVisibleTo(player)) continue
+                    val name = (ServerCacheManager.getItem(obj.type)?.name ?: "null")
+                        .replace('|', '/').replace(';', ',')
+                    sb.append(obj.type).append('|').append(obj.count).append('|').append(obj.x).append('|')
+                        .append(obj.z).append('|').append(obj.level).append('|').append(name).append(';')
+                    if (++shown >= MAX_GROUND_ITEMS) break@loop
+                }
+            }
+        }
+        val line = sb.toString()
+        if (line != connection.lastGroundLine) {
+            connection.lastGroundLine = line
+            connection.send(line)
+        }
+    }
+
     private fun inventoryLine(prefix: String, inventory: Inventory): String {
         val sb = StringBuilder(prefix).append(' ')
         for (slot in 0 until inventory.size) {
@@ -555,12 +835,25 @@ constructor(
         if (c == client) {
             return
         }
+        if (player.isDelayed) {
+            // Server-driven movement (agility force-moves, scripted steps): Unity follows, even
+            // for short moves that would otherwise be pinned back to the client tile.
+            connection.clientTile = c
+            forceMove(connection, c)
+            return
+        }
         val teleported = c.level != client.level || chebyshev(c, client) > PIN_RANGE
         if (teleported) {
             connection.clientTile = c
         } else if (collision.isZoneValid(client)) {
             place(player, client, keepInteraction = true)
         }
+    }
+
+    /** Tells Unity to move the local player to [tile] unconditionally (FORCEMOVE in OsrsServerLink). */
+    private fun forceMove(connection: LinkConnection, tile: CoordGrid) {
+        connection.lastSentTile = tile
+        connection.send("FORCEMOVE ${tile.x} ${tile.z} ${tile.level}")
     }
 
     /**
@@ -626,7 +919,7 @@ constructor(
                 .append(c.x).append(',').append(c.z).append(',').append(c.level).append(',')
                 .append(npc.hitpoints).append(',').append(npc.visType.hitpoints).append(';')
             if (npc.pendingSequence != EntitySeq.NULL) {
-                connection.send("NANIM ${npc.slotId} ${npc.pendingSequence.id}")
+                connection.send("NANIM ${npc.slotId} ${linkSeqId(npc.pendingSequence)}")
             }
         }
         val line = sb.toString()
@@ -673,6 +966,10 @@ constructor(
         const val DODGE_TICKS = 1
 
         const val MAX_NPCS = 200
+
+        const val GROUND_ZONE_RADIUS = 2
+
+        const val MAX_GROUND_ITEMS = 300
 
         private var Player.specialType by enumVarp<SpecialAttackType>("varp.sa_attack")
         private val Player.specialEnergy by intVarp("varp.sa_energy")
