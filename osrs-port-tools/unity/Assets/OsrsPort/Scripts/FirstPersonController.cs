@@ -22,6 +22,8 @@ namespace OsrsPort
         public float eyeHeight = 1.42f;
         /// <summary>How far ahead of the body's centre the first-person eye sits, so the head isn't in view.</summary>
         public float eyeForward = 0.22f;
+        /// <summary>Arms layer on the first-person camera. The body mesh is one piece, so the eye sits inside it.</summary>
+        private static readonly Vector3 FP_ARMS_POS = new Vector3(-0.06f, -0.78f, 0.26f);
         /// <summary>Extra camera rotation (pitch, yaw, roll) other scripts add for swings and blocking.</summary>
         public Vector3 cameraOffsetEuler;
         public float thirdPersonDistance = 3.5f;
@@ -37,6 +39,7 @@ namespace OsrsPort
         private Vector3 dodgeDir;
         private Transform cameraBoom;
         private GameObject avatar;
+        private GameObject fpArms;
         private string avatarLookKey;
         private int[] avatarLookRef;
 
@@ -238,6 +241,7 @@ namespace OsrsPort
         /// <summary>Drives the avatar's base animation from our actual movement and the server's BAS.</summary>
         private void LateUpdate()
         {
+            UpdateFpArms();
             if (avatar == null) return;
             var an = avatar.GetComponent<OsrsAnimator>();
             if (an == null) return;
@@ -248,6 +252,34 @@ namespace OsrsPort
             an.running = speed > (walkSpeed + runSpeed) * 0.5f;
             var bas = OsrsServerLink.Instance != null ? OsrsServerLink.Instance.SelfBas : null;
             if (bas != null) OsrsNpcManager.SetBas(an, bas);
+        }
+
+        private void UpdateFpArms()
+        {
+            var bodyRenderer = avatar != null ? avatar.GetComponent<MeshRenderer>() : null;
+            if (bodyRenderer != null) bodyRenderer.enabled = ThirdPerson;
+            if (ThirdPerson || avatar == null || cameraBoom == null)
+            {
+                if (fpArms != null) fpArms.SetActive(false);
+                return;
+            }
+            var source = avatar.GetComponent<MeshFilter>();
+            if (source == null || source.sharedMesh == null) return;
+            if (fpArms == null)
+            {
+                fpArms = new GameObject("FpArms");
+                fpArms.transform.SetParent(cameraBoom, false);
+                fpArms.transform.localPosition = FP_ARMS_POS;
+                fpArms.transform.localEulerAngles = new Vector3(0f, 180f, 0f);
+                fpArms.AddComponent<MeshFilter>();
+                var rend = fpArms.AddComponent<MeshRenderer>();
+                rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                rend.sharedMaterial = bodyRenderer != null ? bodyRenderer.sharedMaterial : null;
+            }
+            fpArms.SetActive(true);
+            fpArms.GetComponent<MeshFilter>().sharedMesh = source.sharedMesh;
+            if (bodyRenderer != null)
+                fpArms.GetComponent<MeshRenderer>().sharedMaterial = bodyRenderer.sharedMaterial;
         }
 
         private static void LockCursor(bool locked)

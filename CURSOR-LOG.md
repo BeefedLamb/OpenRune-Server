@@ -129,3 +129,19 @@ What works: walking into / logging into a music area sends that area's `MidiSong
 Still not the OSRS instruments: the soundfont is a wavetable bank, not the cache's index-15 patches and index-14 Vorbis samples, so the timbre is not the client's. A jingle was not sent during this login; `JINGLE` uses the same synth when the server writes a `MidiJingle`.
 
 Where this stopped: task 6 is done. Task 7 was not started.
+
+## 7. First-person arms
+
+The first-person eye sits in front of the face. The player body is one mesh, so that camera is inside the chest and the arms stay out of frame. Pulling the eye back onto the shoulders put it inside the head or the torso instead. The eye position is unchanged. First person now draws a second copy of the same animated body on the camera, placed so the arms and weapon are in frame and the head is above it. Third person still uses the real body and the existing camera boom.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/FirstPersonController.cs` — the same file is copied into `E:\osrs\My project\Assets\OsrsPort`. In first person the real body renderer is hidden and a camera child, `FpArms`, shows that mesh at local (-0.06, -0.78, 0.26) with a 180 degree yaw. V or F5 still toggles third person, which hides the arms layer and shows the body.
+
+Tested in the open Unity editor, logged in as Lamb, against the server already listening on 127.0.0.1:43610. `::item bronze_sword` and wield. The worn look was weapon 1277 (bronze sword) and shield 1171 (wooden shield). Looking slightly down, the view is the back of the shoulders: both forearms, the wooden shield on the left, and the bronze sword in the right hand. The head is above the frame, and the castle wall is still visible beside the arms. The shot is `E:\osrs\arms-final.png`. The same session then toggled third person: the arms layer turned off, the real body turned on, and the camera sat behind the whole character (`E:\osrs\arms-third.png`).
+
+What works: first person shows the player's arms and the equipped weapon. Third person still shows the whole body. Tab lock, doors, and movement were left as they are.
+
+The body is still one mesh, so the waist and legs sit in the lower frame with the hands. Looking down keeps that camera-attached body in view rather than the feet on the floor. With nothing in the weapon slot, the same layer shows the hands without a sword.
+
+Where this stopped: task 7 is done. The handoff list is finished.
