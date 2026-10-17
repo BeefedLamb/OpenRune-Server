@@ -9,6 +9,9 @@ import net.rsprot.protocol.game.outgoing.interfaces.IfSetNpcHead
 import net.rsprot.protocol.game.outgoing.interfaces.IfSetText
 import net.rsprot.protocol.game.outgoing.misc.player.RunClientScript
 import net.rsprot.protocol.game.outgoing.misc.player.MessageGame
+import com.github.michaelbull.logging.InlineLogger
+import net.rsprot.protocol.game.outgoing.sound.MidiJingle
+import net.rsprot.protocol.game.outgoing.sound.MidiSongV2
 import net.rsprot.protocol.game.outgoing.sound.SynthSound
 import org.rsmod.game.client.Client
 import org.rsmod.game.entity.Player
@@ -44,6 +47,17 @@ class LinkClient(private val connection: LinkConnection) : Client<Any, Any> {
             }
             is RunClientScript -> onClientScript(message)
             is SynthSound -> connection.send("SND ${message.id} ${message.loops} ${message.delay}")
+            is MidiSongV2 -> {
+                logger.info { "Unity link song ${message.id}" }
+                connection.send(
+                    "SONG ${message.id} ${message.fadeOutDelay} ${message.fadeOutSpeed} " +
+                        "${message.fadeInDelay} ${message.fadeInSpeed}",
+                )
+            }
+            is MidiJingle -> {
+                logger.info { "Unity link jingle ${message.id}" }
+                connection.send("JINGLE ${message.id}")
+            }
         }
     }
 
@@ -122,6 +136,8 @@ class LinkClient(private val connection: LinkConnection) : Client<Any, Any> {
     override fun unregister(service: Any, player: Player) {}
 
     private companion object {
+        private val logger = InlineLogger()
+
         const val CHATBOX_MULTI_INIT = 58
 
         val CHAT_MODAL: Component by lazy {

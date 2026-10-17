@@ -82,7 +82,9 @@ import org.rsmod.routefinder.collision.CollisionFlagMap
  * animation), `BAS key ready turn walkF walkB walkL walkR run` (base stand/walk/run seqs of the
  * link player `me` or another player's slot, on change), `NANIM index seq` (npc animation), `LOC add id x z level shape rot` /
  * `LOC del x z level shape rot`, `SND synth loops delay` (sound for the link player),
- * `SNDA synth x z level loops delay range` (area sound), `ERROR text`.
+ * `SNDA synth x z level loops delay range` (area sound),
+ * `SONG id fadeOutDelay fadeOutSpeed fadeInDelay fadeInSpeed` (a `MidiSongV2`),
+ * `JINGLE id` (a `MidiJingle`), `ERROR text`.
  *
  * Ground items: `GITEMS id|count|x|z|level|name;...` is the full list of ground items the link
  * player can see (own private drops/loot plus public ones) on its floor within GROUND_ZONE_RADIUS

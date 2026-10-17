@@ -110,3 +110,22 @@ What works: two bots next to each other get different bodies through the existin
 Still the same on an unarmed wanderer: the four empty equipment slots stay -1, because there is no helm or weapon to put there. A woodcutter, fighter, or companion still equips their tool on top of this body.
 
 Where this stopped: task 5 is done. Tasks 6–7 were not started.
+
+## 6. Music
+
+The server already decides region music (`MusicAreaScript` / `MusicPlayer`) and sends `MidiSongV2` and `MidiJingle`. The Unity link was dropping both. Songs in the cache are Jagex's packed MIDI, not SMF files.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_music.py` — reads index 6 (songs) and index 11 (jingles), converts each to a standard MIDI file, and writes `world/music.bin.gz`. The export is 882 songs and 315 jingles, none failed. Copied into `E:\osrs\My project\Assets\StreamingAssets\world`. StreamingAssets stays untracked.
+- `content/osrs-port/unity-link/src/main/kotlin/org/rsmod/content/osrsport/unitylink/LinkClient.kt` — `MidiSongV2` becomes `SONG id fadeOutDelay fadeOutSpeed fadeInDelay fadeInSpeed`. `MidiJingle` becomes `JINGLE id`. Id 147 is `midi.stop_music`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsServerLink.cs` — those lines call `OsrsMusic`. The same file is copied into `E:\osrs\My project\Assets\OsrsPort`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMusic.cs` — loads the MIDI and synthesises it with a small General MIDI wavetable soundfont (sine, triangle, square, saw, organ, noise). A song replaces the current one. A jingle plays on its own source and ducks the song. The same file is in the Unity project.
+
+Tested in the open Unity editor, logged in as Lamb on the Lumbridge castle floor (map square 50,50), against the server on 127.0.0.1:43610. The server logged `Unity link song 2`. Unity loaded 882 songs and 315 jingles, then logged `music track=2 voices=4 peak=0.152 dur=136.0s notes=2098 plays=1`. That peak is from half a second of synthesised samples at the first note, and the clip is playing. Two earlier logins in the same area sent songs 76 and 64 (the modern Lumbridge list is shuffled). Song 64's first note is 26 seconds in, so a one-second sample from the start was silent; the measure now starts at the first note.
+
+What works: walking into / logging into a music area sends that area's `MidiSongV2`, and the soundfont synth produces samples for it.
+
+Still not the OSRS instruments: the soundfont is a wavetable bank, not the cache's index-15 patches and index-14 Vorbis samples, so the timbre is not the client's. A jingle was not sent during this login; `JINGLE` uses the same synth when the server writes a `MidiJingle`.
+
+Where this stopped: task 6 is done. Task 7 was not started.

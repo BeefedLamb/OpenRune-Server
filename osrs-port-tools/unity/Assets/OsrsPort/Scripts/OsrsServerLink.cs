@@ -404,6 +404,17 @@ namespace OsrsPort
                         }
                         break;
                     }
+                case "SONG":
+                    {
+                        var p = rest.Split(' ');
+                        if (p.Length >= 5 && int.TryParse(p[0], out int song) && int.TryParse(p[1], out int fd)
+                            && int.TryParse(p[2], out int fs) && int.TryParse(p[3], out int idel) && int.TryParse(p[4], out int isp))
+                            OsrsMusic.Ensure().PlaySong(song, fd, fs, idel, isp);
+                        break;
+                    }
+                case "JINGLE":
+                    if (int.TryParse(rest, out int jingle)) OsrsMusic.Ensure().PlayJingle(jingle);
+                    break;
                 case "NANIM":
                     {
                         var p = rest.Split(' ');
