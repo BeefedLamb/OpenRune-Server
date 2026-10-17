@@ -63,6 +63,11 @@ Files changed:
 
 Tested against the restarted server on 127.0.0.1:43610, logged in as Lamb. `OPLOC 56230 3204 3229 0 1` moved the player from tile 3204,3229 level 0 to tile 3206,3229 level 1. Unity then placed the camera at (3206.50, 5.60, 3229.50). That height is the castle's first floor, inside the stone walls, with the arrow slit looking out at the sky. The floor under the player is the upper plane, and the roof is not drawn over that window.
 
-What works: ground-floor Climb-up changes the server level, and the existing plane code stands the player on that plane.
+What works:
 
-Still broken, and where this stopped: Climb-down on the top stair is bound but was not clicked, because the Unity client was holding the link. Planes 2 and 3 were not stood on. Ladders and the middle spiral stair were already wired and were not retested. Tasks 4–7 were not started.
+- Ground-floor Climb-up on `loc.spiralstairsbottom_3` (already committed) goes from level 0 to level 1.
+- From that first floor, Climb-up on the middle stair `loc.spiralstairsmiddle` (16672, already wired) at 3204,3229 goes to level 2. Unity followed: camera (3206.50, 7.48, 3229.50), standing on `plane_2` (raycast hit y 7.38). `viewLevel` was 2. The north landing is not under a higher roof, so planes 0–3 stayed visible and the view is the battlements looking out over Lumbridge, with fog.
+- Climb-down on the top stair `loc.spiralstairstop_3` (56231) at 3205,3229 op 1 comes back to level 1, tile 3205,3228. Unity followed: camera (3205.50, 5.60, 3228.50), standing on `plane_1` (raycast hit y 5.50). `viewLevel` was 1 and `roofed` was true, so planes 2 and 3 were hidden and nothing above the player collided. The view is the interior stair and the arrow slit, with the floor above not drawn over it.
+- The castle's level-3 locs are roof pieces (loc 1913, no options) over the inner rooms. No stair or ladder in this castle reaches a floor on plane 3. `loc.ladder`, `loc.laddermiddle`, and `loc.laddertop` already have climb content groups, so no new op was added.
+
+Where this stopped: task 3 is done. Tasks 4–7 were not started. Lamb is saved on the first floor at 3205,3228.
