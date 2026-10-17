@@ -132,16 +132,19 @@ Where this stopped: task 6 is done. Task 7 was not started.
 
 ## 7. First-person arms
 
-The first-person eye sits in front of the face. The player body is one mesh, so that camera is inside the chest and the arms stay out of frame. Pulling the eye back onto the shoulders put it inside the head or the torso instead. The eye position is unchanged. First person now draws a second copy of the same animated body on the camera, placed so the arms and weapon are in frame and the head is above it. Third person still uses the real body and the existing camera boom.
+The first-person eye stays in front of the face. A copy of the whole body on that camera faced the wrong way, so the view was the back of the torso, the belt, and the legs, and the sword and shield were not readable.
+
+The arms layer is now only the arms, hands, weapon, and shield (wear slots 6, 9, 3, and 5). Head, torso, and legs are not in that mesh. It sits on the camera in front of the eye, yaw 180 and pitched 25 degrees, so the view looks forward between the arms. The real body renderer is hidden in first person and shown again in third person.
 
 Files changed:
 
-- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/FirstPersonController.cs` — the same file is copied into `E:\osrs\My project\Assets\OsrsPort`. In first person the real body renderer is hidden and a camera child, `FpArms`, shows that mesh at local (-0.06, -0.78, 0.26) with a 180 degree yaw. V or F5 still toggles third person, which hides the arms layer and shows the body.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsPlayerModels.cs` — `GetArmsMesh` builds that partial look. The same file is copied into `E:\osrs\My project\Assets\OsrsPort`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/FirstPersonController.cs` — the camera child `FpArms` uses that mesh at local (0.02, -0.8, 0.7), euler (25, 180, 0). V or F5 still toggles third person. The same file is in the Unity project.
 
-Tested in the open Unity editor, logged in as Lamb, against the server already listening on 127.0.0.1:43610. `::item bronze_sword` and wield. The worn look was weapon 1277 (bronze sword) and shield 1171 (wooden shield). Looking slightly down, the view is the back of the shoulders: both forearms, the wooden shield on the left, and the bronze sword in the right hand. The head is above the frame, and the castle wall is still visible beside the arms. The shot is `E:\osrs\arms-final.png`. The same session then toggled third person: the arms layer turned off, the real body turned on, and the camera sat behind the whole character (`E:\osrs\arms-third.png`).
+Tested in the open Unity editor, logged in as Lamb, against the server already listening on 127.0.0.1:43610. `::item bronze_sword` and wield. Worn slots were weapon 1277 and shield 1171. Looking slightly down, the center of the view is the castle window ahead. The left arm holds the wooden shield and the right hand holds the bronze sword (brown blade, yellow hilt). The back, belt, and legs are not in the frame. The shot is `E:\osrs\arms-final.png`. Third person in the same session turned the arms layer off, turned the real body on, and put the camera behind the whole character (`E:\osrs\arms-third.png`).
 
-What works: first person shows the player's arms and the equipped weapon. Third person still shows the whole body. Tab lock, doors, and movement were left as they are.
+What works: first person looks forward past the arms with the equipped weapon and shield in view. Third person still shows the whole body. The eye position, tab lock, doors, and movement were left as they are.
 
-The body is still one mesh, so the waist and legs sit in the lower frame with the hands. Looking down keeps that camera-attached body in view rather than the feet on the floor. With nothing in the weapon slot, the same layer shows the hands without a sword.
+The arms layer is the rest pose of those parts, not the walk animation. The shield sits large on the left because that is the size of the wooden-shield model in front of the camera.
 
 Where this stopped: task 7 is done. The handoff list is finished.

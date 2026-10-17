@@ -22,8 +22,9 @@ namespace OsrsPort
         public float eyeHeight = 1.42f;
         /// <summary>How far ahead of the body's centre the first-person eye sits, so the head isn't in view.</summary>
         public float eyeForward = 0.22f;
-        /// <summary>Arms layer on the first-person camera. The body mesh is one piece, so the eye sits inside it.</summary>
-        private static readonly Vector3 FP_ARMS_POS = new Vector3(-0.06f, -0.78f, 0.26f);
+        /// <summary>Arms, hands, weapon and shield on the first-person camera, in front of the eye.</summary>
+        private static readonly Vector3 FP_ARMS_POS = new Vector3(0.02f, -0.8f, 0.7f);
+        private static readonly Vector3 FP_ARMS_EULER = new Vector3(25f, 180f, 0f);
         /// <summary>Extra camera rotation (pitch, yaw, roll) other scripts add for swings and blocking.</summary>
         public Vector3 cameraOffsetEuler;
         public float thirdPersonDistance = 3.5f;
@@ -263,23 +264,24 @@ namespace OsrsPort
                 if (fpArms != null) fpArms.SetActive(false);
                 return;
             }
-            var source = avatar.GetComponent<MeshFilter>();
-            if (source == null || source.sharedMesh == null) return;
+            var look = OsrsServerLink.Instance != null ? OsrsServerLink.Instance.SelfLook : null;
+            var mesh = OsrsPlayerModels.GetArmsMesh(look);
+            if (mesh == null) return;
             if (fpArms == null)
             {
                 fpArms = new GameObject("FpArms");
                 fpArms.transform.SetParent(cameraBoom, false);
                 fpArms.transform.localPosition = FP_ARMS_POS;
-                fpArms.transform.localEulerAngles = new Vector3(0f, 180f, 0f);
+                fpArms.transform.localEulerAngles = FP_ARMS_EULER;
                 fpArms.AddComponent<MeshFilter>();
                 var rend = fpArms.AddComponent<MeshRenderer>();
                 rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                rend.sharedMaterial = bodyRenderer != null ? bodyRenderer.sharedMaterial : null;
+                var npcs = FindAnyObjectByType<OsrsNpcManager>();
+                rend.sharedMaterial = npcs != null ? npcs.material
+                    : bodyRenderer != null ? bodyRenderer.sharedMaterial : null;
             }
             fpArms.SetActive(true);
-            fpArms.GetComponent<MeshFilter>().sharedMesh = source.sharedMesh;
-            if (bodyRenderer != null)
-                fpArms.GetComponent<MeshRenderer>().sharedMaterial = bodyRenderer.sharedMaterial;
+            fpArms.GetComponent<MeshFilter>().sharedMesh = mesh;
         }
 
         private static void LockCursor(bool locked)

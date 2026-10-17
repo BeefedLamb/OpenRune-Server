@@ -17,6 +17,16 @@ namespace OsrsPort
 
         public static string Key(int[] look) => look == null ? "" : string.Join(",", look);
 
+        /// <summary>Arms, hands, weapon and shield only. Head, torso and legs are left out.</summary>
+        public static Mesh GetArmsMesh(int[] look)
+        {
+            if (look == null || look.Length < LookLength) return null;
+            var arms = (int[])look.Clone();
+            for (int s = 0; s < 12 && 6 + s < arms.Length; s++)
+                if (s != 3 && s != 5 && s != 6 && s != 9) arms[6 + s] = -1;
+            return GetMesh(arms);
+        }
+
         /// <summary>The body mesh for <paramref name="look"/>, or null if parts aren't exported / loaded yet.</summary>
         public static Mesh GetMesh(int[] look)
         {
