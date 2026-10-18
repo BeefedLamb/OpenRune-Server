@@ -148,3 +148,30 @@ What works: first person looks forward past the arms with the equipped weapon an
 The arms layer is the rest pose of those parts, not the walk animation. The shield sits large on the left because that is the size of the wooden-shield model in front of the camera.
 
 Where this stopped: task 7 is done. The handoff list is finished.
+
+## Session 2: 1:1 OSRS
+
+### 1. OSRS instruments for music
+
+The region-music player was a General MIDI wavetable. It now plays the cache's own patches and samples.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_instruments.py` — writes `world/instruments.bin.gz` (magic `OSI1`): index 15 music patches, index 14 Vorbis samples (not the shared setup archive), then the setup header. The LIVE cache export is 187 patches and 580 samples, about 3.8 MB. Copied to `E:\osrs\My project\Assets\StreamingAssets\world\instruments.bin.gz`. StreamingAssets stays untracked.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsVorbis.cs` — the client's Vorbis decoder. Sample 1 matches a separate Python port of the same decoder byte for byte (`md5 d11cb946`, 29652 samples, 22050 Hz, loop 23323–29652).
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMusicBank.cs` — patch decode, MIDI player, and the mix. Pitch uses the client's 256-units-per-semitone step into 22050 Hz. Volume, expression, pan, and the 220-sample envelope tick follow the same channel defaults (volume 12800, expression 16383, pan 8192, bend 8192, bend range 256). Channel 9 starts on bank 128. A patch sample whose key is even after `key - 1` is an index-4 synth; an odd key is Vorbis.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsSound.cs` — `TryMix` / `TryMixId` render one index-4 synth to signed bytes and return its loop, in samples, so a drum patch can use it.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMusic.cs` — `SONG` / `JINGLE` stream a 22050 Hz mono clip from that mixer. Stop id 147 still stops the song. A jingle ducks the song to 0.3 and the song comes back when the jingle finishes. The same four scripts are in `E:\osrs\My project\Assets\OsrsPort\Scripts` and match the repo copies.
+- `osrs-port-tools/music-test/` — a small .NET program that compiles the mixer without Unity and writes a wav. It is not part of the Unity project.
+
+Tested two ways.
+
+Offline, from `music.bin.gz` and `instruments.bin.gz`, with the 12163 synths loaded: song 64 (a Lumbridge track) is 4493 notes, 324 seconds, 8 voices in the first 8 seconds after the first note, peak 0.179, rms 0.038. Song 2 is 2098 notes, 136 seconds, 6 voices, peak 0.098, rms 0.023. The wavs are `E:\osrs\music-song64.wav` and `E:\osrs\music-song2.wav`. The autocorrelation of the song 64 window peaks around 87 Hz, so the render is tonal.
+
+In the open Unity editor (6000.6.5f1, `E:\osrs\My project`), after the scripts compiled (no CS errors) and play mode logged in as Lamb. The server was already listening on 127.0.0.1:43610. Unity logged `882 songs, 315 jingles, 187 patches, 580 samples` and then `music track=163 voices=8 peak=0.222 dur=115.2s notes=2264 plays=1`. Track 163 is the song the server sent for Lamb's Lumbridge tile on this login. No exception followed. Door synth 62 still played on the three Lumbridge doors.
+
+What works: a region song is mixed from the cache patches and Vorbis samples, at the client's sample rate, and the clip is playing in the editor.
+
+Still not a line-by-line port of the client's mixer. The output is mono, with the left and right pan-law gains folded together. Loop and ping-pong use linear interpolation; the client's other mixers are not ported. Bend-range RPN is not read (the Lumbridge songs that were inspected only send controllers 7, 10, and sometimes 1). A released note with no release envelope stops instead of sustaining. A synth note is not trimmed by `calculateDelay`, so it can start with a few milliseconds of silence. Whether this sounds like the real game still needs a listen.
+
+Where this stopped: task 1 plays in game. Waiting on a listen of Lumbridge (in the editor, or `E:\osrs\music-song64.wav` and `E:\osrs\music-song2.wav`) before changing the mix. Tasks 2–5 were not started.

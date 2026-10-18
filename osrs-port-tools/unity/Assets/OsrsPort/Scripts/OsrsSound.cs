@@ -177,11 +177,47 @@ namespace OsrsPort
             public int I32() { int v = (d[p] << 24) | (d[p + 1] << 16) | (d[p + 2] << 8) | d[p + 3]; p += 4; return v; }
             public int USmart() => d[p] < 128 ? U8() : U16() - 32768;
             public int Smart() => d[p] < 128 ? U8() - 64 : U16() - 49152;
+            public int Remaining => d.Length - p;
+        }
+
+        /// <summary>Index-4 synth as the music engine uses it: signed bytes plus the loop, in samples.</summary>
+        public static bool TryMix(byte[] data, out byte[] pcm, out int loopStart, out int loopEnd)
+        {
+            pcm = null;
+            loopStart = 0;
+            loopEnd = 0;
+            if (data == null || data.Length == 0) return false;
+            try
+            {
+                var fx = new SoundEffect(data);
+                pcm = fx.Mix();
+                if (pcm == null || pcm.Length == 0) return false;
+                loopStart = fx.LoopStart;
+                loopEnd = fx.LoopEnd;
+                if (loopStart < 0) loopStart = 0;
+                if (loopEnd > pcm.Length) loopEnd = pcm.Length;
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public bool TryMixId(int id, out byte[] pcm, out int loopStart, out int loopEnd)
+        {
+            pcm = null;
+            loopStart = 0;
+            loopEnd = 0;
+            if (!Load() || !raw.TryGetValue(id, out var data)) return false;
+            return TryMix(data, out pcm, out loopStart, out loopEnd);
         }
 
         private sealed class SoundEffect
         {
             private readonly Instrument[] instruments = new Instrument[10];
+            public int LoopStart;
+            public int LoopEnd;
 
             public SoundEffect(byte[] data)
             {
@@ -190,6 +226,11 @@ namespace OsrsPort
                 {
                     if (r.Peek() != 0) instruments[i] = new Instrument(r);
                     else r.p++;
+                }
+                if (r.Remaining >= 4)
+                {
+                    LoopStart = r.U16() * SampleRate / 1000;
+                    LoopEnd = r.U16() * SampleRate / 1000;
                 }
             }
 
