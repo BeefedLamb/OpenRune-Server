@@ -19,11 +19,21 @@ namespace OsrsPort
         public const string Flag = "-osrsVerify";
         public const string ResultPath = @"E:\osrs\verify-result.txt";
         public const string TriggerPath = @"E:\osrs\run-verify.txt";
+        public const string ShotPath = @"E:\osrs\run-shot.txt";
+
+        private static string shotFile;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
-            bool armed = Array.IndexOf(Environment.GetCommandLineArgs(), Flag) >= 0 || File.Exists(TriggerPath);
+            shotFile = null;
+            if (File.Exists(ShotPath))
+            {
+                try { shotFile = File.ReadAllText(ShotPath).Trim(); } catch { shotFile = ""; }
+                try { File.Delete(ShotPath); } catch { }
+                if (string.IsNullOrEmpty(shotFile)) shotFile = @"E:\osrs\arms-shot.png";
+            }
+            bool armed = shotFile != null || Array.IndexOf(Environment.GetCommandLineArgs(), Flag) >= 0 || File.Exists(TriggerPath);
             if (!armed) return;
             try { if (File.Exists(TriggerPath)) File.Delete(TriggerPath); } catch { }
             var go = new GameObject("OsrsVerify");
@@ -36,7 +46,119 @@ namespace OsrsPort
 
         private void Start()
         {
-            StartCoroutine(Run());
+            StartCoroutine(shotFile != null ? Shot() : Run());
+        }
+
+        /// <summary>
+        /// Login, wear a sword and shield, and save one first-person frame of the Lumbridge fountain.
+        /// The png path is the contents of <see cref="ShotPath"/>.
+        /// </summary>
+        private IEnumerator Shot()
+        {
+            Note("shot start " + shotFile);
+            var link = OsrsServerLink.Instance;
+            float until = Time.realtimeSinceStartup + 90f;
+            while (link == null && Time.realtimeSinceStartup < until)
+            {
+                link = OsrsServerLink.Instance;
+                yield return null;
+            }
+            if (link == null)
+            {
+                Finish("FAIL no OsrsServerLink");
+                yield break;
+            }
+            var design = link.GetComponent<OsrsCharacterDesign>();
+            until = Time.realtimeSinceStartup + 45f;
+            while (OsrsCharacterDesign.Active && Time.realtimeSinceStartup < until)
+            {
+                if (design != null) design.AutoSubmitForVerify();
+                yield return null;
+            }
+            until = Time.realtimeSinceStartup + 30f;
+            while (!link.LoggedIn && Time.realtimeSinceStartup < until) yield return null;
+            if (!link.LoggedIn)
+            {
+                Finish("FAIL not logged in");
+                yield break;
+            }
+            yield return Wear(link, "bronze_sword", "sword", 3);
+            yield return Wear(link, "wooden_shield", "shield", 5);
+            yield return Arrive(link, 3222, 3212, "courtyard");
+            var fpc = link.GetComponent<FirstPersonController>();
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            var aim = new Vector3(3222.5f, 2.2f, 3218.5f);
+            if (fpc != null) fpc.LookToward(aim, 1f);
+            yield return null;
+            if (fpc != null) fpc.LookToward(aim, 1f);
+            yield return new WaitForEndOfFrame();
+            if (fpc != null) Note("look yaw=" + link.transform.eulerAngles.y.ToString("0") + " pitch=" + fpc.GetType().GetField("pitch", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(fpc));
+            var cam = Camera.main;
+            if (cam == null)
+            {
+                Finish("FAIL no camera");
+                yield break;
+            }
+            var rt = new RenderTexture(1280, 720, 24);
+            var prev = cam.targetTexture;
+            cam.targetTexture = rt;
+            cam.Render();
+            RenderTexture.active = rt;
+            var tex = new Texture2D(1280, 720, TextureFormat.RGB24, false);
+            tex.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
+            tex.Apply();
+            cam.targetTexture = prev;
+            RenderTexture.active = null;
+            File.WriteAllBytes(shotFile, tex.EncodeToPNG());
+            Destroy(tex);
+            Destroy(rt);
+            Note("wrote " + shotFile);
+            Finish("shot done");
+        }
+
+        private IEnumerator Wear(OsrsServerLink link, string spawn, string namePart, int wearSlot)
+        {
+            foreach (var it in link.equipment)
+                if (it.slot == wearSlot && it.name != null && it.name.IndexOf(namePart, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    Note("already worn " + it.name + " slot " + wearSlot);
+                    yield break;
+                }
+            int before = link.messages.Count;
+            link.Send("CHAT ::item " + spawn);
+            OsrsServerLink.Item held = null;
+            float until = Time.realtimeSinceStartup + 4f;
+            while (held == null && Time.realtimeSinceStartup < until)
+            {
+                foreach (var it in link.inventory)
+                    if (it.name != null && it.name.IndexOf(namePart, System.StringComparison.OrdinalIgnoreCase) >= 0)
+                        held = it;
+                yield return null;
+            }
+            if (held == null)
+            {
+                DumpNew(link, before);
+                Note("FAIL no " + spawn);
+                yield break;
+            }
+            for (int op = 1; op <= 3 && !Wearing(link, wearSlot); op++)
+            {
+                link.Send("OPHELD " + held.slot + " " + op);
+                float wait = Time.realtimeSinceStartup + 1.5f;
+                while (!Wearing(link, wearSlot) && Time.realtimeSinceStartup < wait) yield return null;
+            }
+            string worn = "?";
+            foreach (var it in link.equipment)
+                if (it.slot == wearSlot) worn = it.name + " id=" + it.id;
+            Note("wear " + wearSlot + " " + worn);
+        }
+
+        private static bool Wearing(OsrsServerLink link, int wearSlot)
+        {
+            foreach (var it in link.equipment)
+                if (it.slot == wearSlot) return true;
+            return false;
         }
 
         private IEnumerator Run()

@@ -174,4 +174,22 @@ What works: a region song is mixed from the cache patches and Vorbis samples, at
 
 Still not a line-by-line port of the client's mixer. The output is mono, with the left and right pan-law gains folded together. Loop and ping-pong use linear interpolation; the client's other mixers are not ported. Bend-range RPN is not read (the Lumbridge songs that were inspected only send controllers 7, 10, and sometimes 1). A released note with no release envelope stops instead of sustaining. A synth note is not trimmed by `calculateDelay`, so it can start with a few milliseconds of silence. Whether this sounds like the real game still needs a listen.
 
-Where this stopped: task 1 plays in game. Waiting on a listen of Lumbridge (in the editor, or `E:\osrs\music-song64.wav` and `E:\osrs\music-song2.wav`) before changing the mix. Tasks 2–5 were not started.
+Where this stopped: task 1 plays in game. Accepted for now. Still not exact: the mix is mono, and the mixer paths are approximate (pan-law fold, no bend-range RPN, release without an envelope stops the note, synth notes are not delay-trimmed). Left as it is.
+
+### Arms, before the login screen
+
+The first-person arms hung from the top of the view and the wooden shield covered the left side. The arms layer is lower, further forward, scaled to 60%, and tilted so the hands sit at the bottom. Same place as before: parented to the first-person camera.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/FirstPersonController.cs` — arms local position `(-0.06, -0.86, 0.88)`, euler `(26, 180, 0)`, scale `0.60`. The same file is in `E:\osrs\My project\Assets\OsrsPort\Scripts`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsVerify.cs` — `E:\osrs\run-shot.txt` holds a png path. On play it logs in as Lamb, wears the bronze sword and wooden shield if they are not already on, stands at 3222,3212, looks at the fountain, and writes that png.
+- `osrs-port-tools/unity/Assets/OsrsPort/Editor/OsrsVerifyBoot.cs` — enters play when that file or `run-verify.txt` is present.
+
+Tested in Unity 6000.6.5f1, logged in as Lamb, sword and shield already worn, tile 3222,3212, yaw 0, looking at the fountain. Before: `E:\osrs\arms-before.png` (arms and shield fill both sides from the top). After: `E:\osrs\arms-after.png` (courtyard and fountain in the top of the frame, forearms and hands along the bottom, the shield a small shape at the bottom-left, the sword tip at the bottom-right). No CS errors.
+
+What works: the top of the view is the courtyard. The arms come in from the bottom instead of hanging from the top.
+
+Still a rest pose. The forearms sit nearer the bottom centre than the extreme corners, and the sword is only the tip. Walk and attack on the arms are task 5.
+
+Where this stopped: the arm placement is in. Task 2 (login screen) is next.

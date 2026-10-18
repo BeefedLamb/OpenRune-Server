@@ -23,8 +23,9 @@ namespace OsrsPort
         /// <summary>How far ahead of the body's centre the first-person eye sits, so the head isn't in view.</summary>
         public float eyeForward = 0.22f;
         /// <summary>Arms, hands, weapon and shield on the first-person camera, in front of the eye.</summary>
-        private static readonly Vector3 FP_ARMS_POS = new Vector3(0.02f, -0.8f, 0.7f);
-        private static readonly Vector3 FP_ARMS_EULER = new Vector3(25f, 180f, 0f);
+        private static readonly Vector3 FP_ARMS_POS = new Vector3(-0.06f, -0.86f, 0.88f);
+        private static readonly Vector3 FP_ARMS_EULER = new Vector3(26f, 180f, 0f);
+        private static readonly Vector3 FP_ARMS_SCALE = new Vector3(0.60f, 0.60f, 0.60f);
         /// <summary>Extra camera rotation (pitch, yaw, roll) other scripts add for swings and blocking.</summary>
         public Vector3 cameraOffsetEuler;
         public float thirdPersonDistance = 3.5f;
@@ -271,8 +272,6 @@ namespace OsrsPort
             {
                 fpArms = new GameObject("FpArms");
                 fpArms.transform.SetParent(cameraBoom, false);
-                fpArms.transform.localPosition = FP_ARMS_POS;
-                fpArms.transform.localEulerAngles = FP_ARMS_EULER;
                 fpArms.AddComponent<MeshFilter>();
                 var rend = fpArms.AddComponent<MeshRenderer>();
                 rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
@@ -281,6 +280,9 @@ namespace OsrsPort
                     : bodyRenderer != null ? bodyRenderer.sharedMaterial : null;
             }
             fpArms.SetActive(true);
+            fpArms.transform.localPosition = FP_ARMS_POS;
+            fpArms.transform.localEulerAngles = FP_ARMS_EULER;
+            fpArms.transform.localScale = FP_ARMS_SCALE;
             fpArms.GetComponent<MeshFilter>().sharedMesh = mesh;
         }
 
