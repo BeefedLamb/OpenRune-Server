@@ -80,7 +80,8 @@ namespace OsrsPort
         public void DrawScreen(string text, int x, int y, int rgb, bool shadow)
         {
             if (string.IsNullOrEmpty(text)) return;
-            if (shadow) DrawRun(text, x + 1, y + 1, 0, false);
+            int s = OsrsUi.Scale;
+            if (shadow) DrawRun(text, x + s, y + s, 0, false);
             DrawRun(text, x, y, rgb, false);
         }
 
@@ -89,6 +90,7 @@ namespace OsrsPort
         private void DrawRun(string text, int x, int y, int rgb, bool page)
         {
             GUI.color = new Color32((byte)((rgb >> 16) & 255), (byte)((rgb >> 8) & 255), (byte)(rgb & 255), 255);
+            int s = page ? 1 : OsrsUi.Scale;
             for (int i = 0; i < text.Length; i++)
             {
                 int c = text[i];
@@ -96,11 +98,11 @@ namespace OsrsPort
                 var g = glyphs[c];
                 if (g.Tex != null)
                 {
-                    int top = y - (g.Oy + g.H);
-                    var rect = page ? OsrsTitle.PageRect(x, top, g.W, g.H) : new Rect(x, top, g.W, g.H);
+                    int top = y - (g.Oy + g.H) * s;
+                    var rect = page ? OsrsTitle.PageRect(x, top, g.W, g.H) : new Rect(x, top, g.W * s, g.H * s);
                     GUI.DrawTexture(rect, g.Tex, ScaleMode.StretchToFill, true);
                 }
-                x += g.Advance;
+                x += g.Advance * s;
             }
             GUI.color = Color.white;
         }

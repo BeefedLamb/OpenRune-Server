@@ -75,28 +75,17 @@ namespace OsrsPort
 
         public static bool LoginHit() => Hit(BoxX + 27, BoxY + 130, 147, 41);
 
-        public static Rect PageRect(int x, int y, int w, int h)
-        {
-            float scale = Scale;
-            float ox = (Screen.width - Width * scale) * 0.5f;
-            float oy = (Screen.height - Height * scale) * 0.5f;
-            return new Rect(ox + x * scale, oy + y * scale, w * scale, h * scale);
-        }
+        public static Rect PageRect(int x, int y, int w, int h) => OsrsUi.Page(x, y, w, h);
 
         public static bool Hit(int x, int y, int w, int h)
         {
             if (!Placed || Event.current == null) return false;
-            float scale = Scale;
-            if (scale <= 0f) return false;
+            int scale = OsrsUi.Scale;
             var m = Event.current.mousePosition;
-            float ox = (Screen.width - Width * scale) * 0.5f;
-            float oy = (Screen.height - Height * scale) * 0.5f;
-            float px = (m.x - ox) / scale;
-            float py = (m.y - oy) / scale;
+            int px = (int)(m.x - OsrsUi.OriginX) / scale;
+            int py = (int)(m.y - OsrsUi.OriginY) / scale;
             return px >= x && py >= y && px < x + w && py < y + h;
         }
-
-        private static float Scale => Mathf.Min(Screen.width / Width, Screen.height / Height);
 
         private static void Place()
         {

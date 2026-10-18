@@ -79,12 +79,16 @@ namespace OsrsPort
 
         private void Layout()
         {
-            frameRect = new Rect(Screen.width - pageW - 4f, 2f, pageW, pageH);
-            compassRect = new Rect(frameRect.x + pageW * 0.5f - 25f, frameRect.y - 6f, 51f, 51f);
-            float x = frameRect.x - 52f;
-            float y = frameRect.y + 8f;
+            int s = OsrsUi.Scale;
+            int fw = pageW * s, fh = pageH * s;
+            int fx = Screen.width - fw - 4 * s;
+            int fy = 2 * s;
+            frameRect = new Rect(fx, fy, fw, fh);
+            compassRect = new Rect(fx + fw / 2 - 25 * s, fy - 6 * s, 51 * s, 51 * s);
+            int x = fx - 52 * s;
+            int y = fy + 8 * s;
             for (int i = 0; i < 4; i++)
-                orbRects[i] = new Rect(x, y + i * 36f, 57f, 34f);
+                orbRects[i] = new Rect(x, y + i * 36 * s, 57 * s, 34 * s);
         }
 
         private void Build(Transform body, OsrsWorldLoader world, int level)
@@ -135,9 +139,10 @@ namespace OsrsPort
             }
             if (arrowTex != null)
             {
-                float ax = frameRect.x + pageW * 0.5f - arrowTex.width * 0.5f;
-                float ay = frameRect.y + pageH * 0.5f - arrowTex.height * 0.5f;
-                GUI.DrawTexture(new Rect(ax, ay, arrowTex.width, arrowTex.height), arrowTex, ScaleMode.StretchToFill, true);
+                int s = OsrsUi.Scale;
+                float ax = frameRect.x + frameRect.width * 0.5f - arrowTex.width * s * 0.5f;
+                float ay = frameRect.y + frameRect.height * 0.5f - arrowTex.height * s * 0.5f;
+                GUI.DrawTexture(new Rect(ax, ay, arrowTex.width * s, arrowTex.height * s), arrowTex, ScaleMode.StretchToFill, true);
             }
         }
 
@@ -147,13 +152,14 @@ namespace OsrsPort
             float dx = wx - px, dz = wz - pz;
             float dxp = dx * cos - dz * sin;
             float dyp = dx * sin + dz * cos;
-            float x = frameRect.x + (pageW - 1) * 0.5f + dxp * PixelsPerTile;
-            float y = frameRect.y + (pageH - 1) * 0.5f - dyp * PixelsPerTile;
-            int ix = Mathf.RoundToInt(x - frameRect.x), iy = Mathf.RoundToInt(y - frameRect.y);
+            int s = OsrsUi.Scale;
+            float x = frameRect.x + (pageW - 1) * 0.5f * s + dxp * PixelsPerTile * s;
+            float y = frameRect.y + (pageH - 1) * 0.5f * s - dyp * PixelsPerTile * s;
+            int ix = Mathf.RoundToInt((x - frameRect.x) / s), iy = Mathf.RoundToInt((y - frameRect.y) / s);
             if (ix < 0 || iy < 0 || ix >= pageW || iy >= pageH) return;
             if (framePx[iy * pageW + ix].a > 16) return;
             var t = dots[dot];
-            GUI.DrawTexture(new Rect(x - t.width * 0.5f, y - t.height * 0.5f, t.width, t.height), t, ScaleMode.StretchToFill, true);
+            GUI.DrawTexture(new Rect(x - t.width * s * 0.5f, y - t.height * s * 0.5f, t.width * s, t.height * s), t, ScaleMode.StretchToFill, true);
         }
 
         private void DrawCompass(Transform body)
@@ -185,15 +191,16 @@ namespace OsrsPort
         private void Orb(Rect well, Texture2D fill, Texture2D icon, float amount, int number)
         {
             if (orbFrame == null) return;
+            int s = OsrsUi.Scale;
             var flipped = new Rect(well.x + well.width, well.y, -well.width, well.height);
             GUI.DrawTexture(flipped, orbFrame, ScaleMode.StretchToFill, true);
             amount = Mathf.Clamp01(amount);
-            var circle = new Rect(well.x + 2f, well.y + 4f, 26f, 26f);
+            var circle = new Rect(well.x + 2 * s, well.y + 4 * s, 26 * s, 26 * s);
             if (fill != null && amount > 0f)
             {
-                float shown = 26f * amount;
-                GUI.BeginGroup(new Rect(circle.x, circle.y + (26f - shown), 26f, shown));
-                GUI.DrawTexture(new Rect(0f, -(26f - shown), 26f, 26f), fill, ScaleMode.StretchToFill, true);
+                float shown = 26f * s * amount;
+                GUI.BeginGroup(new Rect(circle.x, circle.y + (26 * s - shown), 26 * s, shown));
+                GUI.DrawTexture(new Rect(0f, -(26 * s - shown), 26 * s, 26 * s), fill, ScaleMode.StretchToFill, true);
                 GUI.EndGroup();
             }
             if (icon != null)
@@ -201,7 +208,7 @@ namespace OsrsPort
             if (number >= 0 && numbers != null)
             {
                 int rgb = number <= 0 ? 0xFF0000 : number < 20 ? 0xFFFF00 : 0x00FF00;
-                numbers.DrawScreen(number.ToString(), Mathf.RoundToInt(well.x + 30), Mathf.RoundToInt(well.y + 22), rgb, true);
+                numbers.DrawScreen(number.ToString(), Mathf.RoundToInt(well.x + 30 * s), Mathf.RoundToInt(well.y + 22 * s), rgb, true);
             }
         }
 

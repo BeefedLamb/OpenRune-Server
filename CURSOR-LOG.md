@@ -264,3 +264,22 @@ Still missing from task 3: wall lines (white, red for doors), map-scene sprites 
 
 Where this stopped: the frame, the rotating map, the compass, the dots and the orbs are in and screenshotted. Walls and map icons are the rest of task 3.
 
+### Cache UI scaled by whole pixels
+
+The login text was soft because the 765x503 page was stretched by a fraction of a pixel. Cache UI now draws at 1x, 2x, 3x only, with nearest-neighbour filtering, centred in the window. Whatever is left is black. The minimap, compass, orbs and their numbers use the same step. A game view smaller than 765x503 stays at 1x and the page is cropped equally, so the glyphs do not blur.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsUi.cs` — the shared whole-pixel scale.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsTitle.cs` — the page, flames, logo, box and hit test go through it.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFont.cs` — screen text (the orb numbers) is the same whole-pixel size, shadow included.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMinimap.cs` — frame, compass, arrow, dots and orbs use that scale.
+
+The server was relaunched with `run-server.bat` (`gradlew run --offline`) after the old process on 43610 was stopped. The log says the Unity link is listening. The run orb now has a number.
+
+Ours, login, game view 873x370: `E:\osrs\title-scale.png`. The yellow "Enter your username." is solid cache-font pixels with a one-pixel shadow, and the page sits between black side bars. The real login flames are `E:\osrs\login-flame-wiki.png`.
+
+Ours, courtyard, same view: `E:\osrs\minimap-scale.png`. Hitpoints 17, prayer 7, run 100, special 100. The previous courtyard shot without the run number is `E:\osrs\minimap-screen.png`.
+
+Where this stopped: the scale and the run number are in. Wall lines, map-scene sprites and map-function icons are still the rest of task 3.
+
