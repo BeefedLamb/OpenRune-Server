@@ -316,3 +316,19 @@ Ours, Lamb in the courtyard: `E:\osrs\chat-style.png`. The debug lines and the t
 
 Where this stopped: the debug overlay, the teleport filter, the yellow messages and the mouseover style are in. The fixed-mode frame (interface 548), the chat box, the tabs and the inventory are the rest of task 4. The action bar comes out when those replace it.
 
+### 4. Fixed-mode game frame
+
+Interface 548 is the fixed-mode frame. Its graphic components are decoded from the cache (this revision has no drag-render byte and 18 listeners) and drawn on the 765x503 page, whole-pixel scaled, with black bars outside the page. The stone borders, both tab rows and their icons, and the side panel are the cache sprites. The rotating minimap sits on the frame's map circle (page 545,4, the mapback sprite). The 1-0 action bar is no longer drawn. Game messages are yellow p12 in the chat area; that area is still the world, because the chat interface (162) is the next step.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_interfaces.py` — writes `ui/if/<id>.txt` and the sprites a graphic component uses.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFrame.cs` — draws interface 548.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMinimap.cs` — the map uses the frame's circle while the frame is up.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — the action bar stays hidden while the frame is up, and messages use the chat area.
+- `osrs-port-tools/unity/Assets/OsrsPort/Editor/OsrsVerifyBoot.cs` — a frame shot maximizes the game view so the 503px page fits.
+
+The real frame, from the wiki: `E:\osrs\frame-wiki.png`. Ours, Lamb in the courtyard: `E:\osrs\frame-fixed.png`. The stones, tabs, minimap and orbs line up with the wiki. The chat box, the parchment and the filter row are not drawn yet, so the yellow messages sit on the world. The viewport is still the full page; the borders cover its edges.
+
+Where this stopped: the fixed frame is on screen. Next is the chat box (162), then the inventory and the other tabs, then the interface packets. Esc-to-free-the-mouse is still ahead.
+

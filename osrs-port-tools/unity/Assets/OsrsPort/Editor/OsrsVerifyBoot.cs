@@ -28,7 +28,16 @@ namespace OsrsPort
                 return;
             }
             if (EditorApplication.isPlayingOrWillChangePlaymode) return;
+            if (shot) FitGameView();
             EditorApplication.EnterPlaymode();
+        }
+
+        private static void FitGameView()
+        {
+            var gv = typeof(Editor).Assembly.GetType("UnityEditor.GameView");
+            if (gv == null) return;
+            var win = EditorWindow.GetWindow(gv);
+            if (win != null) win.maximized = true;
         }
 
         private static void Enter()

@@ -95,8 +95,20 @@ namespace OsrsPort
         {
             int s = OsrsUi.Scale;
             int fw = pageW * s, fh = pageH * s;
-            int fx = Screen.width - fw - 4 * s;
-            int fy = 2 * s;
+            int fx, fy;
+            if (OsrsFrame.Showing)
+            {
+                var slot = OsrsUi.Page(OsrsFrame.MapX, OsrsFrame.MapY, pageW, pageH);
+                fx = (int)slot.x;
+                fy = (int)slot.y;
+                fw = (int)slot.width;
+                fh = (int)slot.height;
+            }
+            else
+            {
+                fx = Screen.width - fw - 4 * s;
+                fy = 2 * s;
+            }
             frameRect = new Rect(fx, fy, fw, fh);
             compassRect = new Rect(fx + fw / 2 - 25 * s, fy - 6 * s, 51 * s, 51 * s);
             int x = fx - 52 * s;

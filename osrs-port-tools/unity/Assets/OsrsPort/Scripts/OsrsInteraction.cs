@@ -723,7 +723,6 @@ namespace OsrsPort
             if (link == null || link.CurrentDialogue != null) return;
             var font = OsrsTitle.Plain != null ? OsrsTitle.Plain : OsrsTitle.Bold;
             if (font == null) return;
-            int s = OsrsUi.Scale;
             var lines = new string[6];
             int n = 0;
             for (int i = link.messages.Count - 1; i >= 0 && n < 6; i--)
@@ -732,11 +731,11 @@ namespace OsrsPort
                 if (string.IsNullOrEmpty(msg) || msg.StartsWith("Teleported to CoordGrid")) continue;
                 lines[n++] = msg;
             }
-            int y = Screen.height - 176 * s - (n - 1) * 16 * s;
+            int y = 478 - (n - 1) * 16;
             for (int i = n - 1; i >= 0; i--)
             {
-                font.DrawScreen(lines[i], 8 * s, y, 0xFFFF00, true);
-                y += 16 * s;
+                font.Draw(lines[i], 7, y, 0xFFFF00, false, true);
+                y += 16;
             }
         }
 
@@ -864,7 +863,8 @@ namespace OsrsPort
             DrawStun();
             if (link != null && link.CurrentDialogue != null)
                 DrawDialogue(link.CurrentDialogue);
-            if (link != null && !OsrsPanels.UiOpen && link.CurrentDialogue == null)
+            if (link != null && !OsrsPanels.UiOpen && link.CurrentDialogue == null
+                && !OsrsFrame.Showing)
                 DrawHotbar();
             if (chatOpen)
             {
