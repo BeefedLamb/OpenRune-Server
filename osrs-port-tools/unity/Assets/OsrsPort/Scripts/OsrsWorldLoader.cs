@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using UnityEngine.Rendering;
 
 namespace OsrsPort
@@ -188,8 +189,12 @@ namespace OsrsPort
             return loaded.ContainsKey((rx, ry)) || (world != null && loadTask != null && loadTask.IsCompleted && !world.squares.ContainsKey((rx, ry)));
         }
 
+        private static bool showDebug;
+
         private void Update()
         {
+            var keys = Keyboard.current;
+            if (keys != null && keys.f3Key.wasPressedThisFrame) showDebug = !showDebug;
             if (world == null || loadTask == null) return;
             if (loadTask.IsFaulted)
             {
@@ -1107,7 +1112,7 @@ namespace OsrsPort
 
         private void OnGUI()
         {
-            if (OsrsCharacterDesign.Active || !OsrsTitleScreen.Released) return;
+            if (!showDebug || OsrsCharacterDesign.Active || !OsrsTitleScreen.Released) return;
             var link = OsrsServerLink.Instance;
             string text = status;
             if (link != null)

@@ -708,6 +708,38 @@ namespace OsrsPort
 
         private bool OverHotbar(Vector2 guiPos) => HotbarRect().Contains(guiPos);
 
+        private void DrawMouseover()
+        {
+            var font = OsrsTitle.Plain != null ? OsrsTitle.Plain : OsrsTitle.Bold;
+            if (font == null) return;
+            int op = FirstOp();
+            string line = op > 0 ? targetOps[op - 1] + " " + targetName : targetName;
+            int s = OsrsUi.Scale;
+            font.DrawScreen(line, 4 * s, 16 * s, 0xFFFF00, true);
+        }
+
+        private void DrawGameMessages()
+        {
+            if (link == null || link.CurrentDialogue != null) return;
+            var font = OsrsTitle.Plain != null ? OsrsTitle.Plain : OsrsTitle.Bold;
+            if (font == null) return;
+            int s = OsrsUi.Scale;
+            var lines = new string[6];
+            int n = 0;
+            for (int i = link.messages.Count - 1; i >= 0 && n < 6; i--)
+            {
+                var msg = link.messages[i];
+                if (string.IsNullOrEmpty(msg) || msg.StartsWith("Teleported to CoordGrid")) continue;
+                lines[n++] = msg;
+            }
+            int y = Screen.height - 176 * s - (n - 1) * 16 * s;
+            for (int i = n - 1; i >= 0; i--)
+            {
+                font.DrawScreen(lines[i], 8 * s, y, 0xFFFF00, true);
+                y += 16 * s;
+            }
+        }
+
         private void DrawHotbar()
         {
             if (slotStyle == null)
@@ -826,33 +858,8 @@ namespace OsrsPort
                 GUI.color = Color.white;
             }
 
-            if (hasTarget && CursorMode && !menuOpen)
-            {
-                // OSRS-style hover text at the top-left plus a tag by the cursor.
-                int f = FirstOp();
-                var mp = MouseGuiPos();
-                string hover = f > 0 ? $"{targetOps[f - 1]} {targetName}" : targetName;
-                int more = 0;
-                foreach (var o in targetOps) if (!string.IsNullOrEmpty(o)) more++;
-                if (more > 1) hover += $" / {more - 1} more options";
-                Shadowed(new Rect(mp.x + 14, mp.y + 8, 500, 20), hover, smallStyle, TextAnchor.UpperLeft);
-            }
-            else if (hasTarget)
-            {
-                int first = FirstOp();
-                int atk = AttackOp();
-                string line = first > 0 ? $"[E] {targetOps[first - 1]} {targetName}" : targetName;
-                if (atk > 0) line = $"[Click] Attack {targetName}" + (first > 0 && first != atk ? $"   [E] {targetOps[first - 1]}" : "");
-                if (!inRange && first > 0) line += "  (move closer)";
-                Shadowed(new Rect(cx - 300, cy + 14, 600, 24), line, labelStyle);
-                var extra = new List<string>();
-                for (int i = 0; i < targetOps.Length; i++)
-                    if (!string.IsNullOrEmpty(targetOps[i]) && i + 1 != first && i + 1 != atk) extra.Add($"Shift+{i + 1}: {targetOps[i]}");
-                if (extra.Count > 0)
-                    Shadowed(new Rect(cx - 300, cy + 38, 600, 20), string.Join("   ", extra), smallStyle, TextAnchor.UpperCenter);
-                if (targetIsNpc && targetNpc != null && targetNpc.maxHp > 0)
-                    Shadowed(new Rect(cx - 300, cy + 58, 600, 20), $"HP {targetNpc.hp}/{targetNpc.maxHp}", smallStyle, TextAnchor.UpperCenter);
-            }
+            if (hasTarget)
+                DrawMouseover();
 
             DrawStun();
             if (link != null && link.CurrentDialogue != null)
@@ -884,12 +891,7 @@ namespace OsrsPort
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);
                 else if (attackPressStart >= 0f && Time.time - attackPressStart >= powerAttackHold)
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Power attack ready", labelStyle);
-                int shown = link.CurrentDialogue != null ? 0 : Mathf.Min(6, link.messages.Count);
-                for (int i = 0; i < shown; i++)
-                {
-                    var msg = link.messages[link.messages.Count - shown + i];
-                    Shadowed(new Rect(10, Screen.height - 180 + i * 20, Screen.width - 20, 20), msg, smallStyle);
-                }
+                DrawGameMessages();
                 // Own hitsplats, stacked under the crosshair like OSRS splats on your character.
                 int slotIdx = 0;
                 for (int i = link.hitsTaken.Count - 1; i >= 0 && slotIdx < 4; i--)

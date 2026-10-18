@@ -737,6 +737,7 @@ namespace OsrsPort
 
         public void AddMessage(string text)
         {
+            if (string.IsNullOrEmpty(text) || text.StartsWith("Teleported to CoordGrid")) return;
             messages.Add(text);
             if (messages.Count > 60) messages.RemoveAt(0);
         }

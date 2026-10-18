@@ -302,3 +302,17 @@ Ours, Lamb at 3222,3212 looking north: `E:\osrs\minimap-walls.png`. The enlarged
 
 Where this stopped: task 3 is in. Next is the fixed-mode game interface.
 
+### 4. Game messages and the mouseover, first step
+
+The top-left debug lines are behind F3. Server lines that start with "Teleported to CoordGrid" are not shown. The remaining game messages are the cache p12 font in yellow, above the action bar. A crosshair target is drawn the way the client's top-left mouseover is: yellow p12, "Attack Goblin (level-2)", at the top-left. The 1-0 bar and the chat list stay until the real fixed-mode interface replaces them.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsWorldLoader.cs` — F3 toggles the "Logged in as / Squares loaded / Server tile" lines. The key is read through the Input System.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsServerLink.cs` — those teleport lines are dropped when they arrive.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — `DrawGameMessages` and `DrawMouseover`.
+
+Ours, Lamb in the courtyard: `E:\osrs\chat-style.png`. The debug lines and the teleport text are gone. The yellow lines are "Social list did not load...", "Welcome to OpenRune." and a "Did you know?" tip. The crosshair was on empty ground, so the mouseover line is not in that frame.
+
+Where this stopped: the debug overlay, the teleport filter, the yellow messages and the mouseover style are in. The fixed-mode frame (interface 548), the chat box, the tabs and the inventory are the rest of task 4. The action bar comes out when those replace it.
+
