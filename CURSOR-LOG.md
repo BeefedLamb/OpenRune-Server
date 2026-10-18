@@ -238,3 +238,29 @@ What works: the screen is up on Play with the world not loading. The stone hall 
 Still short of a paused frame of the live client. The fire is the 128-wide classic panels, so it is narrower than the post-Kebos wiki still (175 wide) and a bit shorter in this frame. There is no Cancel button and no password field, which is the handoff. The caret is the font's bar glyph.
 
 Where this stopped: task 2 is in. Next is the minimap, compass and orbs.
+
+### 3. Minimap, compass and orbs, first step
+
+The corner of the game view is the cache minimap: the stone frame, a map built from the loaded ground colours, the compass, the dots and the four orbs. Clicks on it do not walk.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_hud.py` — writes `ui/hud/` from index 8: mapback 12, compass 169, the red arrow 424, mapdots 300, the orb fills and icons (1060–1071, 1607, 1610) and `ui/p11.fnt`. Run into both StreamingAssets trees. The pngs stay untracked.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsWorldLoader.cs` — each loaded square keeps a 64x64 unlit ground colour, one pixel per tile. `TryTileColor` reads it.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMinimap.cs` — draws that colour through the frame's transparent hole, rotated so the way you face is up. Yellow dots are NPCs, white dots are other players, red dots are ground items, and the red arrow is you. The compass is sprite 169 with the flat brown backing keyed out, and a click calls `FaceNorth`. The four orbs use the cache fills, icons and frame. Numbers are p11. Hitpoints, prayer and special come from the server. Run energy is on the same message once the server is rebuilt.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFont.cs` — `DrawScreen` draws a cache font at screen pixels, for the orb numbers.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsServerLink.cs` — `ME` now also carries prayer, base prayer and run energy (0–10000).
+- `content/osrs-port/unity-link/.../UnityLinkScript.kt` and `UnityLinkServer.kt` — the server sends those three extra fields. The process that was already listening on 43610 is the previous build, so this shot's run orb has no number yet.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — a click on the map, compass or orbs is not a world click. The old bottom HP and special bars are gone.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/FirstPersonController.cs` — `FaceNorth` snaps the body to yaw 0. The arm placement is untouched.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsTitleScreen.cs` — the title stays up until Login, and does not come back over the world afterwards.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsVerify.cs` — the courtyard shot is a game-view capture, so the interface is in the png.
+
+The same scripts are in `E:\osrs\My project\Assets\OsrsPort\Scripts`. Unity 6000.6.5f1 compiled them with no CS errors.
+
+Ours, logged in as Lamb, standing in the Lumbridge courtyard and looking north: `E:\osrs\minimap-screen.png`. The frame, compass, arrow and orbs are the cache sprites. The map in that shot shows the courtyard grass, the path and the castle, with yellow NPC dots and red item dots. Prayer on this account is 7, hitpoints 17, special 100.
+
+Still missing from task 3: wall lines (white, red for doors), map-scene sprites and map-function icons. The run-energy number needs the unity-link process restarted so it sends the new `ME` fields.
+
+Where this stopped: the frame, the rotating map, the compass, the dots and the orbs are in and screenshotted. Walls and map icons are the rest of task 3.
+

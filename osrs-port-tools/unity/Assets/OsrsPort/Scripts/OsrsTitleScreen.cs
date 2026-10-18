@@ -9,13 +9,15 @@ namespace OsrsPort
     {
         public static bool Released { get; private set; }
         public static string PendingName { get; private set; }
-        public static bool Showing => !OsrsCharacterDesign.Active;
+        public static bool Showing => !Released;
 
         private string nameInput = "";
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
         {
+            Released = false;
+            PendingName = null;
             if (FindAnyObjectByType<OsrsTitleScreen>() != null) return;
             new GameObject("OsrsTitleScreen").AddComponent<OsrsTitleScreen>();
         }

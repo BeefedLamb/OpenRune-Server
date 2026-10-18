@@ -148,6 +148,14 @@ namespace OsrsPort
                 transform.position = new Vector3(transform.position.x, 30f, transform.position.z);
         }
 
+        /// <summary>Snap the body to face north. The compass click uses this.</summary>
+        public void FaceNorth()
+        {
+            transform.rotation = Quaternion.Euler(0f, 0f, 0f);
+            if (cameraPivot != null)
+                cameraPivot.localEulerAngles = new Vector3(pitch, 0f, 0f) + cameraOffsetEuler;
+        }
+
         /// <summary>Turns the body and camera toward a world point; t = 1 snaps, smaller values ease.</summary>
         public void LookToward(Vector3 point, float t)
         {

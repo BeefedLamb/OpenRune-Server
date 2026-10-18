@@ -193,6 +193,9 @@ class LinkConnection(val socket: Socket) {
     var lastStatsLine: String = ""
     var lastGroundLine: String = ""
     var lastSpecEnergy: Int = -1
+    var lastPrayer: Int = -1
+    var lastMaxPrayer: Int = -1
+    var lastRunEnergy: Int = -1
     var bankOpen: Boolean = false
     var lastBankLine: String = ""
     var lastBankNote: Int = -1

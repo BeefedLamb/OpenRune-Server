@@ -37,6 +37,10 @@ namespace OsrsPort
         public int MaxHp { get; private set; } = -1;
         /// <summary>Special attack energy in tenths of a percent (0-1000).</summary>
         public int SpecEnergy { get; private set; } = -1;
+        /// <summary>Current and base prayer, and run energy (0-10000). -1 until the server sends them.</summary>
+        public int Prayer { get; private set; } = -1;
+        public int MaxPrayer { get; private set; } = -1;
+        public int RunEnergy { get; private set; } = -1;
         /// <summary>Time of the player's last attack animation, for first-person swing feedback.</summary>
         public float LastAnimTime { get; private set; } = -10f;
         public int LastAnimId { get; private set; } = -1;
@@ -377,6 +381,12 @@ namespace OsrsPort
                             Hp = hp; MaxHp = max;
                         }
                         if (p.Length >= 3 && int.TryParse(p[2], out int spec)) SpecEnergy = spec;
+                        if (p.Length >= 5 && int.TryParse(p[3], out int prayer) && int.TryParse(p[4], out int maxPrayer))
+                        {
+                            Prayer = prayer;
+                            MaxPrayer = maxPrayer;
+                        }
+                        if (p.Length >= 6 && int.TryParse(p[5], out int run)) RunEnergy = run;
                         break;
                     }
                 case "ANIM":

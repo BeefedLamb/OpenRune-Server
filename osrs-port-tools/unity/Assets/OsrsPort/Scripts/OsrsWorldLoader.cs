@@ -105,6 +105,7 @@ namespace OsrsPort
             public float[][] decorPos; public Color32[][] decorCol; public float[][] decorUv;
             public float[][] heights;  // 65x65 corner heights per plane, NaN where the plane has no ground
             public byte[][] tileFlags; // 64x64 per plane: 1 = ground tile, 2 = anything (ground or object)
+            public Color32[][] mapColors; // 64x64 unlit ground colour per tile, for the minimap
             public List<Placement> placements;
             public List<DynamicSpec> dynamics;
         }
@@ -117,11 +118,25 @@ namespace OsrsPort
             public MeshCollider[] solidCollider = new MeshCollider[Planes];
             public float[][] heights;
             public byte[][] tileFlags;
+            public Color32[][] mapColors;
             public List<Placement> placements;
             public Dictionary<(int, int, int, int), List<GameObject>> dynamics = new Dictionary<(int, int, int, int), List<GameObject>>();
         }
 
         public WorldData Data => world;
+
+        /// <summary>Unlit ground colour of one tile, or false where that square is not loaded.</summary>
+        public bool TryTileColor(int tileX, int tileZ, int level, out Color32 color)
+        {
+            color = default;
+            if (tileX < 0 || tileZ < 0 || loaded == null) return false;
+            if (!loaded.TryGetValue((tileX >> 6, tileZ >> 6), out var sq) || sq.mapColors == null) return false;
+            int lv = Mathf.Clamp(level, 0, Planes - 1);
+            var plane = sq.mapColors[lv];
+            if (plane == null) return false;
+            color = plane[(tileX & 63) * 64 + (tileZ & 63)];
+            return color.a != 0;
+        }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoStart()
@@ -284,6 +299,7 @@ namespace OsrsPort
             {
                 rx = rx, ry = ry, dynamics = new List<DynamicSpec>(),
                 terrainPos = new float[Planes][], terrainCol = new Color32[Planes][], terrainUv = new float[Planes][],
+                mapColors = new Color32[Planes][],
                 solidPos = new float[Planes][], solidCol = new Color32[Planes][], solidUv = new float[Planes][],
                 decorPos = new float[Planes][], decorCol = new Color32[Planes][], decorUv = new float[Planes][],
                 heights = new float[Planes][], tileFlags = new byte[Planes][],
@@ -313,6 +329,25 @@ namespace OsrsPort
                     if (sq3) texOf[i] = d[p + 3];
                     p += stride;
                 }
+                var accR = new int[64 * 64];
+                var accG = new int[64 * 64];
+                var accB = new int[64 * 64];
+                var accN = new int[64 * 64];
+                for (int i = 0; i < nv; i++)
+                {
+                    int tx = Mathf.Clamp(Mathf.FloorToInt(tpos[i * 3] - ox), 0, 63);
+                    int tz = Mathf.Clamp(Mathf.FloorToInt(tpos[i * 3 + 2] - oz), 0, 63);
+                    int k = tx * 64 + tz;
+                    accR[k] += tcol[i].r;
+                    accG[k] += tcol[i].g;
+                    accB[k] += tcol[i].b;
+                    accN[k]++;
+                }
+                var map = new Color32[64 * 64];
+                for (int k = 0; k < map.Length; k++)
+                    if (accN[k] > 0)
+                        map[k] = new Color32((byte)(accR[k] / accN[k]), (byte)(accG[k] / accN[k]), (byte)(accB[k] / accN[k]), 255);
+                build.mapColors[lv] = map;
                 for (int i = 0; i < nv; i++)
                 {
                     int cx = Mathf.RoundToInt(tpos[i * 3] - ox), cz = Mathf.RoundToInt(tpos[i * 3 + 2] - oz);
@@ -448,7 +483,7 @@ namespace OsrsPort
         {
             var go = new GameObject($"square_{b.rx}_{b.ry}");
             go.transform.SetParent(transform, false);
-            var sq = new LoadedSquare { root = go, placements = b.placements, heights = b.heights, tileFlags = b.tileFlags };
+            var sq = new LoadedSquare { root = go, placements = b.placements, heights = b.heights, tileFlags = b.tileFlags, mapColors = b.mapColors };
             for (int lv = 0; lv < Planes; lv++)
             {
                 var plane = new GameObject($"plane_{lv}");

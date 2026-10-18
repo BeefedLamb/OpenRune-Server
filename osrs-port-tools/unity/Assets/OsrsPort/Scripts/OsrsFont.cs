@@ -76,7 +76,17 @@ namespace OsrsPort
             DrawRun(text, x, y, rgb);
         }
 
-        private void DrawRun(string text, int x, int y, int rgb)
+        /// <summary>Draw at screen pixels. <paramref name="y"/> is the baseline.</summary>
+        public void DrawScreen(string text, int x, int y, int rgb, bool shadow)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            if (shadow) DrawRun(text, x + 1, y + 1, 0, false);
+            DrawRun(text, x, y, rgb, false);
+        }
+
+        private void DrawRun(string text, int x, int y, int rgb) => DrawRun(text, x, y, rgb, true);
+
+        private void DrawRun(string text, int x, int y, int rgb, bool page)
         {
             GUI.color = new Color32((byte)((rgb >> 16) & 255), (byte)((rgb >> 8) & 255), (byte)(rgb & 255), 255);
             for (int i = 0; i < text.Length; i++)
@@ -87,7 +97,8 @@ namespace OsrsPort
                 if (g.Tex != null)
                 {
                     int top = y - (g.Oy + g.H);
-                    GUI.DrawTexture(OsrsTitle.PageRect(x, top, g.W, g.H), g.Tex, ScaleMode.StretchToFill, true);
+                    var rect = page ? OsrsTitle.PageRect(x, top, g.W, g.H) : new Rect(x, top, g.W, g.H);
+                    GUI.DrawTexture(rect, g.Tex, ScaleMode.StretchToFill, true);
                 }
                 x += g.Advance;
             }

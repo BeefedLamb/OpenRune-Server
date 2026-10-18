@@ -113,20 +113,11 @@ namespace OsrsPort
                 Finish("FAIL no camera");
                 yield break;
             }
-            var rt = new RenderTexture(1280, 720, 24);
-            var prev = cam.targetTexture;
-            cam.targetTexture = rt;
-            cam.Render();
-            RenderTexture.active = rt;
-            var tex = new Texture2D(1280, 720, TextureFormat.RGB24, false);
-            tex.ReadPixels(new Rect(0, 0, 1280, 720), 0, 0);
-            tex.Apply();
-            cam.targetTexture = prev;
-            RenderTexture.active = null;
-            File.WriteAllBytes(shotFile, tex.EncodeToPNG());
-            Destroy(tex);
-            Destroy(rt);
-            Note("wrote " + shotFile);
+            if (File.Exists(shotFile)) File.Delete(shotFile);
+            ScreenCapture.CaptureScreenshot(shotFile);
+            float appeared = Time.realtimeSinceStartup + 3f;
+            while (!File.Exists(shotFile) && Time.realtimeSinceStartup < appeared) yield return null;
+            Note("wrote " + shotFile + " designActive=" + OsrsCharacterDesign.Active);
             Finish("shot done");
         }
 

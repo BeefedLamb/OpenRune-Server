@@ -369,7 +369,7 @@ namespace OsrsPort
                 inRange = Distance(me0.x, me0.y, lx, lz, lockedNpc.size, lockedNpc.size) <= opRange;
                 return;
             }
-            if (CursorMode && (menuOpen || OverHotbar(MouseGuiPos()))) return;
+            if (CursorMode && (menuOpen || OverHotbar(MouseGuiPos()) || OsrsMinimap.Hit(MouseGuiPos()))) return;
             var ray = CursorMode ? cam.ScreenPointToRay(MouseScreenPos()) : new Ray(cam.transform.position, cam.transform.forward);
             float extra = Vector3.Distance(cam.transform.position, transform.position);
             if (!Physics.Raycast(ray, out var hit, reach + extra, ~(1 << OsrsNpcManager.PlayerLayer)))
@@ -678,7 +678,7 @@ namespace OsrsPort
 #endif
             if (!left && !right) return;
             var gp = MouseGuiPos();
-            if (OverHotbar(gp)) return;
+            if (OverHotbar(gp) || OsrsMinimap.Hit(gp)) return;
             if (!hasTarget)
             {
                 if (left) selectedNpc = null;
@@ -868,25 +868,7 @@ namespace OsrsPort
                 Shadowed(new Rect(12, Screen.height - 209, 696, 20), "> " + chatText + (caret ? "_" : ""), smallStyle, TextAnchor.MiddleLeft);
             }
             if (link != null)
-            {
-                if (link.Hp >= 0)
                 {
-                    GUI.color = new Color(0f, 0f, 0f, 0.5f);
-                    GUI.Box(new Rect(10, Screen.height - 40, 204, 24), GUIContent.none);
-                    GUI.color = link.Hp * 3 <= link.MaxHp ? Color.red : Color.green;
-                    GUI.Box(new Rect(12, Screen.height - 38, 200f * Mathf.Clamp01(link.Hp / (float)Mathf.Max(1, link.MaxHp)), 20), GUIContent.none);
-                    GUI.color = Color.white;
-                    Shadowed(new Rect(12, Screen.height - 38, 200, 20), $"HP {link.Hp}/{link.MaxHp}", smallStyle, TextAnchor.MiddleCenter);
-                }
-                if (link.SpecEnergy >= 0)
-                {
-                    GUI.color = new Color(0f, 0f, 0f, 0.5f);
-                    GUI.Box(new Rect(10, Screen.height - 62, 204, 18), GUIContent.none);
-                    GUI.color = new Color(0.3f, 0.6f, 1f);
-                    GUI.Box(new Rect(12, Screen.height - 60, 200f * Mathf.Clamp01(link.SpecEnergy / 1000f), 14), GUIContent.none);
-                    GUI.color = Color.white;
-                    Shadowed(new Rect(12, Screen.height - 61, 200, 16), $"Special {link.SpecEnergy / 10}%", smallStyle, TextAnchor.MiddleCenter);
-                }
                 if (lockedNpc != null)
                 {
                     var sp = cam.WorldToScreenPoint(lockedNpc.transform.position + Vector3.up * (lockedNpc.height * 0.6f));

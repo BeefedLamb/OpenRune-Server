@@ -25,6 +25,8 @@ import org.rsmod.api.player.output.mes
 import org.rsmod.api.player.protect.ProtectedAccessLauncher
 import org.rsmod.api.player.protect.clearPendingAction
 import org.rsmod.api.player.stat.baseHitpointsLvl
+import org.rsmod.api.player.stat.basePrayerLvl
+import org.rsmod.api.player.stat.prayerLvl
 import org.rsmod.api.player.stat.stat
 import org.rsmod.api.player.stat.statBase
 import org.rsmod.api.player.stat.hitpoints
@@ -348,7 +350,10 @@ constructor(
         connection.lastSentTile = player.coords
         val c = player.coords
         connection.send("WELCOME ${c.x} ${c.z} ${c.level}")
-        connection.send("ME ${player.hitpoints} ${player.baseHitpointsLvl} ${player.specialEnergy}")
+        connection.send(
+            "ME ${player.hitpoints} ${player.baseHitpointsLvl} ${player.specialEnergy} " +
+                "${player.prayerLvl} ${player.basePrayerLvl} ${player.runEnergy}",
+        )
         if (CharacterDesign.restore(player)) {
             connection.send(CharacterDesign.lookLine(player))
         } else {
@@ -693,11 +698,20 @@ constructor(
             val hp = player.hitpoints
             val maxHp = player.baseHitpointsLvl
             val spec = player.specialEnergy
-            if (hp != connection.lastHp || maxHp != connection.lastMaxHp || spec != connection.lastSpecEnergy) {
+            val prayer = player.prayerLvl
+            val maxPrayer = player.basePrayerLvl
+            val run = player.runEnergy
+            if (hp != connection.lastHp || maxHp != connection.lastMaxHp || spec != connection.lastSpecEnergy ||
+                prayer != connection.lastPrayer || maxPrayer != connection.lastMaxPrayer ||
+                run != connection.lastRunEnergy
+            ) {
                 connection.lastHp = hp
                 connection.lastMaxHp = maxHp
                 connection.lastSpecEnergy = spec
-                connection.send("ME $hp $maxHp $spec")
+                connection.lastPrayer = prayer
+                connection.lastMaxPrayer = maxPrayer
+                connection.lastRunEnergy = run
+                connection.send("ME $hp $maxHp $spec $prayer $maxPrayer $run")
             }
             if (player.pendingSequence != EntitySeq.NULL) {
                 connection.send("ANIM ${linkSeqId(player.pendingSequence)}")
