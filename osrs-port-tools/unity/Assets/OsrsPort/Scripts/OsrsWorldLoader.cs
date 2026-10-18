@@ -126,6 +126,7 @@ namespace OsrsPort
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoStart()
         {
+            if (!OsrsTitleScreen.Released) return;
             if (FindAnyObjectByType<OsrsWorldLoader>() != null) return;
             if (!File.Exists(Path.Combine(Application.streamingAssetsPath, "world", "index.bin"))) return;
             new GameObject("OsrsWorld").AddComponent<OsrsWorldLoader>();
@@ -1042,7 +1043,8 @@ namespace OsrsPort
             var go = new GameObject("Player") { layer = OsrsNpcManager.PlayerLayer };
             go.transform.position = start;
             go.AddComponent<FirstPersonController>();
-            go.AddComponent<OsrsServerLink>();
+            var link = go.AddComponent<OsrsServerLink>();
+            if (!string.IsNullOrEmpty(OsrsTitleScreen.PendingName)) link.playerName = OsrsTitleScreen.PendingName;
             go.AddComponent<OsrsInteraction>();
             go.AddComponent<OsrsPanels>();
             go.AddComponent<OsrsGroundItems>();
@@ -1059,7 +1061,7 @@ namespace OsrsPort
 
         private void OnGUI()
         {
-            if (OsrsCharacterDesign.Active) return;
+            if (OsrsCharacterDesign.Active || !OsrsTitleScreen.Released) return;
             var link = OsrsServerLink.Instance;
             string text = status;
             if (link != null)

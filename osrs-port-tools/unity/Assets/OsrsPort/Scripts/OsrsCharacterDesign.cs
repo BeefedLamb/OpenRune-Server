@@ -39,7 +39,12 @@ namespace OsrsPort
         {
             link = GetComponent<OsrsServerLink>();
             if (link == null) { Finish(); return; }
-            nameInput = link.playerName ?? "";
+            if (!string.IsNullOrEmpty(OsrsTitleScreen.PendingName))
+            {
+                nameInput = OsrsTitleScreen.PendingName;
+                SubmitName();
+            }
+            else nameInput = link.playerName ?? "";
         }
 
         private void SetStage(Stage s)
@@ -205,30 +210,25 @@ namespace OsrsPort
 
         private void DrawEnterName()
         {
-            bool enter = EnterPressed();
-            GUI.SetNextControlName("osrs-login-name");
-            nameInput = GUI.TextField(OsrsTitle.LoginField(), nameInput, 12, fieldStyle);
-            GUI.FocusControl("osrs-login-name");
-            var button = OsrsTitle.LoginButton();
-            if (GUI.Button(button, GUIContent.none, GUIStyle.none) || enter)
+            bool caret = ((Time.frameCount / 20) & 1) == 0;
+            OsrsTitle.DrawLogin(nameInput, caret, "Enter your username.", null);
+            if (EnterPressed() || (Event.current.type == EventType.MouseDown && OsrsTitle.LoginHit()))
             {
-                if (enter) Event.current.Use();
+                Event.current.Use();
                 SubmitName();
             }
-            var login = new GUIStyle(labelStyle) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
-            login.normal.textColor = Color.white;
-            GUI.Label(button, "Login", login);
         }
 
         private void DrawConnecting()
         {
-            var r = Panel(420, 180);
-            GUI.Label(new Rect(r.x, r.y + 14, r.width, 30), "Logging in", titleStyle);
-            GUI.Label(new Rect(r.x + 10, r.y + 60, r.width - 20, 40), link.Status, smallStyle);
+            OsrsTitle.DrawLogin(nameInput, false, "Enter your username.", link.Status);
             string st = link.Status ?? "";
             bool failed = !link.LoggedIn && (st.Contains("offline") || st.Contains("Disconnected") || st.StartsWith("Server:"));
-            if (failed && GUI.Button(new Rect(r.x + 110, r.y + 118, r.width - 220, 40), "Continue offline", buttonStyle))
+            if (failed && Event.current.type == EventType.MouseDown && OsrsTitle.LoginHit())
+            {
+                Event.current.Use();
                 Finish();
+            }
         }
 
         private void DrawDesign(bool submitting)

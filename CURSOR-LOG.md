@@ -213,3 +213,28 @@ What works: the stone hall, the Old School logo, the login box and the stone Log
 Still missing from task 2: the animated rune flames, text in the cache fonts (the field and the word Login are Unity's IMGUI font), and showing this screen before the world starts loading. The world load is covered once the login UI is up.
 
 Where this stopped: the static title is in and screenshotted. Flames and cache fonts are the rest of task 2.
+
+### 2. Login screen, flames and cache fonts
+
+Play now opens on the title screen and does not load the world until Login. The box is where the client draws it. The words are the cache bitmap fonts. The side flames are the client's flame algorithm with the cache rune sprites.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_title.py` — also writes `rune0.png`–`rune11.png` (index 8 `runes`, 12 frames of 96x96) and `b12.fnt` / `p12.fnt`. A font file is `FNT1`, then 256 glyphs: advance from index 13, then ox, oy, sw, sh, then the glyph alpha. Run into both StreamingAssets trees. Those binaries stay untracked.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFont.cs` — draws one cache font. The y argument is the baseline. A second pass at +1,+1 is the black shadow. Glyphs are white and `GUI.color` tints them.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFlames.cs` — `calcFlamesPosition`, `doFlamesDrawing` and `randomizeBackground` from the 317 client. Left panel at (0, 0), right panel at (637, 0), each 128x265. The three palettes and the red/green shift match. A rune's opaque pixels punch holes in the height field so the fire rises in that shape. The first 220 steps run at load, which is about how long the client takes to form the first rune.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsTitle.cs` — mirrors `title.jpg` into a 765x503 page. Logo at (234, 18). Box at (202, 171). Login button sprite at box-local (27, 130). "Enter your username." in b12 yellow, centred on the box at local y 53. "Username: " plus the name in b12 white at local (90, 90), with a blinking bar. "Login" in b12 white centred on the button. A status line, when there is one, is p12.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsTitleScreen.cs` — created at startup, draws the title immediately, and holds the world until Login. Enter or the button calls `Release`, which then creates the world loader and copies the name onto the player link.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsWorldLoader.cs` — `AutoStart` returns until the title releases. `SpawnPlayer` copies the pending name.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsCharacterDesign.cs` — the username and connecting stages use the same cache-font login. Character design is unchanged and still only appears on a first login.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsVerify.cs` — a shot path containing "title" captures after 2.5s and does not release the world. Any other shot releases as Lamb so the world still starts.
+
+The same scripts are in `E:\osrs\My project\Assets\OsrsPort\Scripts`. Unity 6000.6.5f1 compiled them with no CS errors.
+
+Real flame, one frame of the wiki animation `Login_flame.webp` (175x335, the side fire above the brazier): `E:\osrs\login-flame-wiki.png`. Page: https://oldschool.runescape.wiki/w/File:Login_flame.webp . Ours, game view, before any world load: `E:\osrs\title-screen.png`. The editor log for that shot is `OsrsVerify: title shot` with no `world index loaded` after the compile, and `music track=0`.
+
+What works: the screen is up on Play with the world not loading. The stone hall is the mirrored cache jpeg. The logo, box and Login button are the cache sprites at the client's positions. The side fire forms a rune above each brazier. "Enter your username.", "Username:" and "Login" are b12 with the shadow. Scape Main starts with the screen. Login still starts the world and the existing character-design flow.
+
+Still short of a paused frame of the live client. The fire is the 128-wide classic panels, so it is narrower than the post-Kebos wiki still (175 wide) and a bit shorter in this frame. There is no Cancel button and no password field, which is the handoff. The caret is the font's bar glyph.
+
+Where this stopped: task 2 is in. Next is the minimap, compass and orbs.

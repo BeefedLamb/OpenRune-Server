@@ -56,6 +56,19 @@ namespace OsrsPort
         private IEnumerator Shot()
         {
             Note("shot start " + shotFile);
+            if (shotFile != null && shotFile.IndexOf("title", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                float shown = Time.realtimeSinceStartup + 2.5f;
+                while (Time.realtimeSinceStartup < shown) yield return null;
+                yield return new WaitForEndOfFrame();
+                ScreenCapture.CaptureScreenshot(shotFile);
+                float wrote = Time.realtimeSinceStartup + 2f;
+                while (!File.Exists(shotFile) && Time.realtimeSinceStartup < wrote) yield return null;
+                Note("wrote " + shotFile);
+                Finish("title shot");
+                yield break;
+            }
+            OsrsTitleScreen.Release("Lamb");
             var link = OsrsServerLink.Instance;
             float until = Time.realtimeSinceStartup + 90f;
             while (link == null && Time.realtimeSinceStartup < until)
@@ -69,18 +82,6 @@ namespace OsrsPort
                 yield break;
             }
             var design = link.GetComponent<OsrsCharacterDesign>();
-            if (shotFile != null && shotFile.IndexOf("title", System.StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                float shown = Time.realtimeSinceStartup + 4f;
-                while (Time.realtimeSinceStartup < shown) yield return null;
-                yield return new WaitForEndOfFrame();
-                ScreenCapture.CaptureScreenshot(shotFile);
-                float wrote = Time.realtimeSinceStartup + 2f;
-                while (!File.Exists(shotFile) && Time.realtimeSinceStartup < wrote) yield return null;
-                Note("wrote " + shotFile);
-                Finish("title shot");
-                yield break;
-            }
             until = Time.realtimeSinceStartup + 45f;
             while (OsrsCharacterDesign.Active && Time.realtimeSinceStartup < until)
             {
@@ -176,6 +177,7 @@ namespace OsrsPort
         private IEnumerator Run()
         {
             Note("verify start");
+            OsrsTitleScreen.Release("Lamb");
             var link = OsrsServerLink.Instance;
             float until = Time.realtimeSinceStartup + 90f;
             while (link == null && Time.realtimeSinceStartup < until)
