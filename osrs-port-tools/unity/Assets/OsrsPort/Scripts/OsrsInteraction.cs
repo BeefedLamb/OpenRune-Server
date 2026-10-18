@@ -718,6 +718,13 @@ namespace OsrsPort
             font.DrawScreen(line, 4 * s, 16 * s, 0xFFFF00, true);
         }
 
+        private static string Fit(OsrsFont font, string text, int width)
+        {
+            if (text == null || font.Width(text) <= width) return text;
+            while (text.Length > 1 && font.Width(text) > width) text = text.Substring(0, text.Length - 1);
+            return text;
+        }
+
         public void DrawGameMessages()
         {
             if (link == null || link.CurrentDialogue != null) return;
@@ -734,7 +741,7 @@ namespace OsrsPort
             int y = 448 - (n - 1) * 14;
             for (int i = n - 1; i >= 0; i--)
             {
-                font.Draw(lines[i], 8, y, 0x000000, false, false);
+                font.Draw(Fit(font, lines[i], 480), 8, y, 0x000000, false, false);
                 y += 14;
             }
             bool caret = chatOpen && Mathf.FloorToInt(Time.time * 2f) % 2 == 0;

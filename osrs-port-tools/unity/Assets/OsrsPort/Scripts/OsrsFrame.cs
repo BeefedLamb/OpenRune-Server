@@ -61,6 +61,7 @@ namespace OsrsPort
             DrawFilters();
             var interaction = FindAnyObjectByType<OsrsInteraction>();
             if (interaction != null) interaction.DrawGameMessages();
+            DrawInventory();
             GUI.depth = depth;
         }
 
@@ -122,6 +123,28 @@ namespace OsrsPort
                 small.Draw("On", cx, bar + 20, 0x00FF00, true, true);
             }
             small.Draw("Report", 437 + 40, bar + 16, 0xFFFFFF, true, true);
+        }
+
+        private void DrawInventory()
+        {
+            var link = OsrsServerLink.Instance;
+            if (link == null) return;
+            const int ox = 547, oy = 205, pitchX = 51, pitchY = 38;
+            for (int i = 0; i < link.inventory.Count; i++)
+            {
+                var it = link.inventory[i];
+                if (it.slot < 0 || it.slot >= 28 || it.id < 0) continue;
+                int col = it.slot % 4, row = it.slot / 4;
+                int x = ox + col * pitchX, y = oy + row * pitchY;
+                OsrsItemIcons.Draw(OsrsUi.Page(x, y, 36, 32), it.id);
+                if (it.count > 1 && small != null)
+                {
+                    int rgb = it.count >= 10000000 ? 0x00FF80 : it.count >= 100000 ? 0xFFFFFF : 0xFFFF00;
+                    string text = it.count >= 10000000 ? (it.count / 1000000) + "M"
+                        : it.count >= 100000 ? (it.count / 1000) + "K" : it.count.ToString();
+                    small.Draw(text, x, y + 10, rgb, false, true);
+                }
+            }
         }
 
         private Texture2D Sprite(int id, int frame)

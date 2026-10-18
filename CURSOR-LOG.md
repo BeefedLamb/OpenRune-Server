@@ -346,3 +346,16 @@ The real chat, from the wiki frame: `E:\osrs\frame-wiki.png`. Ours: `E:\osrs\fra
 
 Where this stopped: the frame and the chat box are on screen. Next is the inventory in the side panel, then the other tabs, then the interface packets. Esc-to-free-the-mouse is still ahead.
 
+### 4. Inventory grid
+
+Interface 149 is an empty 190x261 layer. The client fills it from a script: 4 columns by 7 rows, each slot 36x32, gaps from the panel size. Those slots are drawn on the side-panel stone with the item icon sheets. A stack over 1 shows its count in p11 at the top-left of the slot (yellow, white from 100k, green from 10M). Chat lines are cut to the parchment width so they no longer run into the panel. The inventory tab is the one on screen; the other tabs are not switched yet.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFrame.cs` — draws the inventory on the side panel.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — chat lines stop at the scrollbar.
+
+Ours: `E:\osrs\frame-inv.png`. The panel shows the bronze swords left in the bag from earlier item spawns, and a stack of 100 coins with a yellow count. The real empty panel is the brown stone in `E:\osrs\frame-wiki.png`.
+
+Where this stopped: the frame, the chat box and the inventory icons are on screen. Next is the other side tabs (worn, skills, prayer, spellbook, combat, settings), then the interface packets, then Esc freeing the mouse.
+
