@@ -332,3 +332,17 @@ The real frame, from the wiki: `E:\osrs\frame-wiki.png`. Ours, Lamb in the court
 
 Where this stopped: the fixed frame is on screen. Next is the chat box (162), then the inventory and the other tabs, then the interface packets. Esc-to-free-the-mouse is still ahead.
 
+### 4. Chat box
+
+The opaque chat box is the cache parchment (`chat_background`, sprite 1017) across the bottom of the frame, with the filter row under it: All, Game, Public, Private, Channel, Clan, Trade, and the red Report button. The second line of each filter shows the default "On" in green. Scroll arrows sit in the top-right and bottom-right of the parchment. Game messages are black p12 on the parchment, and the bottom line is "Player name:". The floating chat entry box is not drawn while the frame is up.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_interfaces.py` — also writes `ui/if/chat.txt` and the chat sprites, including the second scrollbar frame.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFrame.cs` — draws the chat box and its labels, then the messages on top of the parchment.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — messages and the name prompt are black on the parchment. Crosshair and overhead text draw in front of the frame.
+
+The real chat, from the wiki frame: `E:\osrs\frame-wiki.png`. Ours: `E:\osrs\frame-chat.png`. The parchment, the filter row and the red Report button match. Lines are not wrapped yet, so a long tip runs to the scrollbar. The scrollbar track between the arrows is not drawn. The "On" labels are the static default, not the server's filter varbits.
+
+Where this stopped: the frame and the chat box are on screen. Next is the inventory in the side panel, then the other tabs, then the interface packets. Esc-to-free-the-mouse is still ahead.
+

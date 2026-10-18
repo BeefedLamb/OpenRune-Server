@@ -143,6 +143,41 @@ def layout(rows):
     return placed
 
 
+def save_sprite(cache, sprites, sid):
+    frames = decode_sprite(cache.archive_data(SPRITES, sid))
+    for i, (width, height, pixels) in enumerate(frames):
+        name = f"{sid}.png" if i == 0 else f"{sid}_{i}.png"
+        path = os.path.join(sprites, name)
+        if os.path.exists(path):
+            continue
+        Image.frombytes("RGBA", (width, height), pixels).save(path)
+        print(f"sprite {sid} frame {i} {width}x{height}")
+
+
+def write_fixed_chat(cache, out_dir):
+    """The opaque chat box as the client builds it: parchment, then the filter row."""
+    ui = os.path.join(out_dir, "ui", "if")
+    sprites = os.path.join(ui, "sprite")
+    os.makedirs(sprites, exist_ok=True)
+    for sid in (1017, 1018, 3051, 3057, 316):
+        save_sprite(cache, sprites, sid)
+    y_bar = 480
+    buttons = (3, 65, 127, 189, 251, 313, 375)
+    lines = [
+        (0, 338, 519, 142, 1017, 0, 0, 0),
+        (0, y_bar, 519, 23, 1018, 0, 0, 0),
+    ]
+    for x in buttons:
+        lines.append((x, y_bar + 1, 56, 22, 3051, 0, 0, 0))
+    lines.append((437, y_bar + 1, 79, 22, 3057, 0, 0, 0))
+    lines.append((499, 343, 16, 16, 316, 0, 0, 0))
+    lines.append((499, 460, 16, 16, 316, 0, 0, 1))
+    with open(os.path.join(ui, "chat.txt"), "w", encoding="utf-8") as f:
+        for row in lines:
+            f.write("\t".join(str(v) for v in row) + "\n")
+    print(f"chat box: {len(lines)} graphics")
+
+
 def main():
     cache_dir, out_dir, iid = sys.argv[1], sys.argv[2], int(sys.argv[3])
     cache = Cache(cache_dir)
@@ -154,17 +189,13 @@ def main():
     os.makedirs(sprites, exist_ok=True)
     needed = sorted({p[5] for p in placed})
     for sid in needed:
-        path = os.path.join(sprites, f"{sid}.png")
-        if os.path.exists(path):
-            continue
-        frames = decode_sprite(cache.archive_data(SPRITES, sid))
-        width, height, pixels = frames[0]
-        Image.frombytes("RGBA", (width, height), pixels).save(path)
-        print(f"sprite {sid} {width}x{height}")
+        save_sprite(cache, sprites, sid)
     with open(os.path.join(ui, f"{iid}.txt"), "w", encoding="utf-8") as f:
         for _, x, y, w, h, sprite, tiled, opacity in placed:
-            f.write(f"{x}\t{y}\t{w}\t{h}\t{sprite}\t{tiled}\t{opacity}\n")
+            f.write(f"{x}\t{y}\t{w}\t{h}\t{sprite}\t{tiled}\t{opacity}\t0\n")
     print(f"interface {iid}: {len(placed)} graphics, {len(needed)} sprites")
+    if iid == 548:
+        write_fixed_chat(cache, out_dir)
 
 
 if __name__ == "__main__":

@@ -17,11 +17,17 @@ namespace OsrsPort
 
         private struct Piece
         {
-            public int x, y, w, h, sprite, tiled;
+            public int x, y, w, h, sprite, tiled, frame;
         }
+
+        private static readonly int[] FilterX = { 3, 65, 127, 189, 251, 313, 375 };
+        private static readonly string[] FilterName = {
+            "All", "Game", "Public", "Private", "Channel", "Clan", "Trade",
+        };
 
         private Piece[] pieces;
         private readonly Dictionary<int, Texture2D> sprites = new Dictionary<int, Texture2D>();
+        private OsrsFont small;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Boot()
@@ -52,6 +58,9 @@ namespace OsrsPort
             DrawOutside();
             for (int i = 0; i < pieces.Length; i++)
                 DrawPiece(pieces[i]);
+            DrawFilters();
+            var interaction = FindAnyObjectByType<OsrsInteraction>();
+            if (interaction != null) interaction.DrawGameMessages();
             GUI.depth = depth;
         }
 
@@ -78,7 +87,7 @@ namespace OsrsPort
 
         private void DrawPiece(Piece p)
         {
-            var tex = Sprite(p.sprite);
+            var tex = Sprite(p.sprite, p.frame);
             if (tex == null) return;
             var group = OsrsUi.Page(p.x, p.y, p.w, p.h);
             GUI.BeginGroup(group);
@@ -97,22 +106,52 @@ namespace OsrsPort
             GUI.EndGroup();
         }
 
-        private Texture2D Sprite(int id)
+        private void DrawFilters()
         {
-            if (sprites.TryGetValue(id, out var tex)) return tex;
-            string path = Path.Combine(Application.streamingAssetsPath, "ui", "if", "sprite", id + ".png");
+            if (small == null) return;
+            const int bar = 480;
+            for (int i = 0; i < FilterX.Length; i++)
+            {
+                int cx = FilterX[i] + 28;
+                if (i == 0)
+                {
+                    small.Draw(FilterName[i], cx, bar + 16, 0xFFFFFF, true, true);
+                    continue;
+                }
+                small.Draw(FilterName[i], cx, bar + 10, 0xFFFFFF, true, true);
+                small.Draw("On", cx, bar + 20, 0x00FF00, true, true);
+            }
+            small.Draw("Report", 437 + 40, bar + 16, 0xFFFFFF, true, true);
+        }
+
+        private Texture2D Sprite(int id, int frame)
+        {
+            int key = id + frame * 100000;
+            if (sprites.TryGetValue(key, out var tex)) return tex;
+            string name = frame == 0 ? id + ".png" : id + "_" + frame + ".png";
+            string path = Path.Combine(Application.streamingAssetsPath, "ui", "if", "sprite", name);
             tex = LoadTex(path);
-            sprites[id] = tex;
+            sprites[key] = tex;
             return tex;
         }
 
         private void Load()
         {
             if (pieces != null) return;
-            string path = Path.Combine(Application.streamingAssetsPath, "ui", "if", "548.txt");
+            string dir = Path.Combine(Application.streamingAssetsPath, "ui", "if");
+            string path = Path.Combine(dir, "548.txt");
             if (!File.Exists(path)) return;
+            small = OsrsFont.Load(Path.Combine(Application.streamingAssetsPath, "ui", "p11.fnt"));
+            var list = new List<Piece>();
+            ReadPieces(path, list);
+            string chat = Path.Combine(dir, "chat.txt");
+            if (File.Exists(chat)) ReadPieces(chat, list);
+            pieces = list.ToArray();
+        }
+
+        private static void ReadPieces(string path, List<Piece> list)
+        {
             var lines = File.ReadAllLines(path);
-            var list = new List<Piece>(lines.Length);
             for (int i = 0; i < lines.Length; i++)
             {
                 var line = lines[i];
@@ -127,9 +166,9 @@ namespace OsrsPort
                     h = int.Parse(p[3]),
                     sprite = int.Parse(p[4]),
                     tiled = int.Parse(p[5]),
+                    frame = p.Length > 7 ? int.Parse(p[7]) : 0,
                 });
             }
-            pieces = list.ToArray();
         }
 
         private static Texture2D LoadTex(string path)

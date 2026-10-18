@@ -718,7 +718,7 @@ namespace OsrsPort
             font.DrawScreen(line, 4 * s, 16 * s, 0xFFFF00, true);
         }
 
-        private void DrawGameMessages()
+        public void DrawGameMessages()
         {
             if (link == null || link.CurrentDialogue != null) return;
             var font = OsrsTitle.Plain != null ? OsrsTitle.Plain : OsrsTitle.Bold;
@@ -731,12 +731,15 @@ namespace OsrsPort
                 if (string.IsNullOrEmpty(msg) || msg.StartsWith("Teleported to CoordGrid")) continue;
                 lines[n++] = msg;
             }
-            int y = 478 - (n - 1) * 16;
+            int y = 448 - (n - 1) * 14;
             for (int i = n - 1; i >= 0; i--)
             {
-                font.Draw(lines[i], 7, y, 0xFFFF00, false, true);
-                y += 16;
+                font.Draw(lines[i], 8, y, 0x000000, false, false);
+                y += 14;
             }
+            bool caret = chatOpen && Mathf.FloorToInt(Time.time * 2f) % 2 == 0;
+            string typed = chatOpen ? chatText + (caret ? "|" : "") : "*";
+            font.Draw("Player name: " + typed, 5, 470, 0x000000, false, false);
         }
 
         private void DrawHotbar()
@@ -849,6 +852,8 @@ namespace OsrsPort
                 smallStyle.normal.textColor = new Color(1f, 1f, 1f, 0.9f);
                 bigStyle = new GUIStyle(GUI.skin.label) { fontSize = 22, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
             }
+            int guiDepth = GUI.depth;
+            GUI.depth = 20;
             float cx = Screen.width / 2f, cy = Screen.height / 2f;
             if (!CursorMode)
             {
@@ -866,7 +871,7 @@ namespace OsrsPort
             if (link != null && !OsrsPanels.UiOpen && link.CurrentDialogue == null
                 && !OsrsFrame.Showing)
                 DrawHotbar();
-            if (chatOpen)
+            if (chatOpen && !OsrsFrame.Showing)
             {
                 GUI.color = new Color(0f, 0f, 0f, 0.6f);
                 GUI.Box(new Rect(8, Screen.height - 212, 704, 26), GUIContent.none);
@@ -891,7 +896,7 @@ namespace OsrsPort
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Blocking", labelStyle);
                 else if (attackPressStart >= 0f && Time.time - attackPressStart >= powerAttackHold)
                     Shadowed(new Rect(cx - 100, cy + 90, 200, 24), "Power attack ready", labelStyle);
-                DrawGameMessages();
+                if (!OsrsFrame.Showing) DrawGameMessages();
                 // Own hitsplats, stacked under the crosshair like OSRS splats on your character.
                 int slotIdx = 0;
                 for (int i = link.hitsTaken.Count - 1; i >= 0 && slotIdx < 4; i--)
@@ -964,6 +969,7 @@ namespace OsrsPort
             GUI.color = Color.white;
             if (menuOpen && CursorMode && !OsrsPanels.UiOpen) DrawMenu();
             else menuOpen = false;
+            GUI.depth = guiDepth;
         }
 
         private const float HitsplatTime = 1.2f;
