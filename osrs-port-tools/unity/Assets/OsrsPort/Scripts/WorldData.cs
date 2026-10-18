@@ -49,6 +49,8 @@ namespace OsrsPort
             public int solid = 2;
             public int offX, offY, offZ;
             public int resolvedId;
+            public int wallOrDoor;
+            public int mapScene = -1, mapArea = -1;
 
             public bool HasOps
             {
@@ -200,6 +202,12 @@ namespace OsrsPort
                     d.solid = int.Parse(p[6]);
                     d.offX = int.Parse(p[7]); d.offY = int.Parse(p[8]); d.offZ = int.Parse(p[9]);
                     d.resolvedId = int.Parse(p[10]);
+                }
+                if (p.Length >= 14)
+                {
+                    d.wallOrDoor = int.Parse(p[11]);
+                    d.mapScene = int.Parse(p[12]);
+                    d.mapArea = int.Parse(p[13]);
                 }
                 locs[d.id] = d;
             }

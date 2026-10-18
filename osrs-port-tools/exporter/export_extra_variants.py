@@ -70,7 +70,8 @@ def main():
             ops = "|".join((o or "").replace("|", "/") for o in d.ops)
             f.write(
                 f"{lid}\t{d.name}\t{d.size_x}\t{d.size_y}\t{ops}\t{1 if d.rotated else 0}\t"
-                f"{d.solid}\t{d.offset[0]}\t{d.offset[1]}\t{d.offset[2]}\t{d.id}\n"
+                f"{d.solid}\t{d.offset[0]}\t{d.offset[1]}\t{d.offset[2]}\t{d.id}\t"
+                f"{d.wall_or_door}\t{d.map_scene}\t{d.map_area}\n"
             )
     print(f"variants {len(variants)} + {len(extra)}, new models {len(new_models)}")
 

@@ -283,3 +283,22 @@ Ours, courtyard, same view: `E:\osrs\minimap-scale.png`. Hitpoints 17, prayer 7,
 
 Where this stopped: the scale and the run number are in. Wall lines, map-scene sprites and map-function icons are still the rest of task 3.
 
+### 3. Minimap walls and map icons
+
+Walls are white lines and doors are red. Map-scene sprites (trees, bushes, the fountain) are stamped into the map so they rotate with it. Map-function icons (the round cache sprites: water, anvil, star, range) stay upright and sit on top.
+
+Files changed:
+
+- `osrs-port-tools/exporter/defs.py` — loc opcode 19 is the door flag, 68 is the map-scene id, 82 is the map-element id.
+- `osrs-port-tools/exporter/export_mapicons.py` — rewrites `locs.txt` with those three columns and writes `ui/hud/mapscene/` (archive 317, 272 frames) and `ui/hud/mapfunc/` (387 element sprites). Run into both StreamingAssets trees. The pngs and `locs.txt` stay untracked.
+- `osrs-port-tools/exporter/export_extra_variants.py` — a later full export writes the same three columns.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/WorldData.cs` — `LocDef` reads wallOrDoor, mapScene and mapArea.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsWorldLoader.cs` — each placement keeps its rotation. `VisitPlacements` walks the loaded squares.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMinimap.cs` — draws the lines into the map texture, stamps map-scene sprites, and draws map-function icons in screen space.
+
+The same scripts are in `E:\osrs\My project\Assets\OsrsPort\Scripts`. Unity compiled them with no CS errors.
+
+Ours, Lamb at 3222,3212 looking north: `E:\osrs\minimap-walls.png`. The enlarged corner is `E:\osrs\minimap-walls-crop.png`. The castle wall is a white line, doors are red, and the fountain carries the blue water icon from map element 41. Run reads 100.
+
+Where this stopped: task 3 is in. Next is the fixed-mode game interface.
+

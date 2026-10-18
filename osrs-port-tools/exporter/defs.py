@@ -119,6 +119,9 @@ class LocDef:
         self.morphs = None
         self.ops = [None] * 5
         self.solid = 2
+        self.wall_or_door = -1
+        self.map_scene = -1
+        self.map_area = -1
 
     def model_for(self, ltype):
         """(model_id_list, needs_mirror_base) for a scene request of loc type `ltype`."""
@@ -181,7 +184,7 @@ def decode_loc(lid, data):
         elif op == 18:
             pass
         elif op == 19:
-            b.u8()
+            d.wall_or_door = b.u8()
         elif op == 21:
             d.contoured = 0
         elif op in (22, 23, 27, 62, 64, 73, 74, 89, 90, 94):
@@ -216,7 +219,8 @@ def decode_loc(lid, data):
         elif op == 67:
             sz = b.u16()
         elif op == 68:
-            b.u16()
+            scene = b.u16()
+            d.map_scene = -1 if scene == 0xFFFF else scene
         elif op == 69:
             b.u8()
         elif op == 70:
@@ -247,7 +251,8 @@ def decode_loc(lid, data):
         elif op == 81:
             d.contoured = b.u8() * 256
         elif op == 82:
-            b.u16()
+            area = b.u16()
+            d.map_area = -1 if area == 0xFFFF else area
         elif op == 91:
             b.u8()
         elif op == 93:
@@ -273,6 +278,13 @@ def decode_loc(lid, data):
             raise ValueError(f"loc {lid}: unknown opcode {op} at {b.p}")
     d.scale = (sx, sy, sz)
     d.offset = (ox, oy, oz)
+    if d.wall_or_door < 0:
+        d.wall_or_door = 0
+        types = d.model_types
+        if d.models is not None and (types is None or types[0] == 10):
+            d.wall_or_door = 1
+        elif any(d.ops):
+            d.wall_or_door = 1
     return d
 
 

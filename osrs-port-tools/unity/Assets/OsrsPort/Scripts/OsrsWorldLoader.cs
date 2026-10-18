@@ -64,6 +64,7 @@ namespace OsrsPort
             public int x, z, level;     // south-west tile of the footprint (world tiles)
             public int sizeX, sizeZ;    // footprint after rotation
             public int modelType;
+            public int rotation;
             public bool decor;
             public bool interactive;    // has its own GameObject instead of being baked
             public int faceStart, faceCount;
@@ -136,6 +137,16 @@ namespace OsrsPort
             if (plane == null) return false;
             color = plane[(tileX & 63) * 64 + (tileZ & 63)];
             return color.a != 0;
+        }
+
+        public void VisitPlacements(Action<Placement> visit)
+        {
+            foreach (var sq in loaded.Values)
+            {
+                var list = sq.placements;
+                if (list == null) continue;
+                for (int i = 0; i < list.Count; i++) visit(list[i]);
+            }
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -425,10 +436,10 @@ namespace OsrsPort
                 p += 16;
                 var variant = world.variants[vid];
                 int fx = 1, fz = 1;
+                int rot = (yaw / 512) & 3;
                 world.locs.TryGetValue(variant.locId, out var def);
                 if (def != null && (variant.modelType == 10 || variant.modelType == 11))
                 {
-                    int rot = (yaw / 512) & 3;
                     fx = (rot & 1) == 1 ? def.sizeY : def.sizeX;
                     fz = (rot & 1) == 1 ? def.sizeX : def.sizeY;
                 }
@@ -437,7 +448,7 @@ namespace OsrsPort
                 var placement = new Placement
                 {
                     locId = variant.locId, x = rx * 64 + lx, z = ry * 64 + lz, level = level,
-                    sizeX = fx, sizeZ = fz, modelType = variant.modelType, decor = decor, interactive = interactive,
+                    sizeX = fx, sizeZ = fz, modelType = variant.modelType, rotation = rot, decor = decor, interactive = interactive,
                     faceStart = decor ? de[lvi] / 3 : so[lvi] / 3, faceCount = vm.faceCount,
                 };
                 build.placements.Add(placement);

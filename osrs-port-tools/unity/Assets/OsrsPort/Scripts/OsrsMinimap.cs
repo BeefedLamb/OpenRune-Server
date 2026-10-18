@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 
@@ -25,6 +26,18 @@ namespace OsrsPort
         private int builtFrame = -1;
         private OsrsFont numbers;
         private Rect frameRect, compassRect;
+        private readonly Dictionary<int, Texture2D> sceneTex = new Dictionary<int, Texture2D>();
+        private readonly Dictionary<int, Color32[]> scenePx = new Dictionary<int, Color32[]>();
+        private readonly Dictionary<int, Texture2D> funcTex = new Dictionary<int, Texture2D>();
+        private readonly List<FuncIcon> funcIcons = new List<FuncIcon>();
+        private static readonly Color32 WallWhite = new Color32(238, 238, 238, 255);
+        private static readonly Color32 DoorRed = new Color32(238, 0, 0, 255);
+
+        private struct FuncIcon
+        {
+            public int area;
+            public float x, y;
+        }
         private Rect[] orbRects = new Rect[4];
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
@@ -66,6 +79,7 @@ namespace OsrsPort
             if (page != null)
                 GUI.DrawTexture(frameRect, page, ScaleMode.StretchToFill, true);
             DrawDots(body, link);
+            DrawFuncIcons();
             DrawCompass(body);
             DrawOrbs(link);
             GUI.depth = depth;
@@ -113,6 +127,7 @@ namespace OsrsPort
                     int wz = Mathf.FloorToInt(pz - dx * sin + dy * cos);
                     pagePx[i] = world.TryTileColor(wx, wz, level, out var col) ? col : new Color32(0, 0, 0, 255);
                 }
+            DrawFeatures(body, world, level, cos, sin, px, pz);
             var up = new Color32[pagePx.Length];
             for (int y = 0; y < pageH; y++)
                 System.Array.Copy(pagePx, y * pageW, up, (pageH - 1 - y) * pageW, pageW);
@@ -210,6 +225,155 @@ namespace OsrsPort
                 int rgb = number <= 0 ? 0xFF0000 : number < 20 ? 0xFFFF00 : 0x00FF00;
                 numbers.DrawScreen(number.ToString(), Mathf.RoundToInt(well.x + 30 * s), Mathf.RoundToInt(well.y + 22 * s), rgb, true);
             }
+        }
+
+        private void DrawFeatures(Transform body, OsrsWorldLoader world, int level, float cos, float sin, float px, float pz)
+        {
+            funcIcons.Clear();
+            int s = OsrsUi.Scale;
+            var data = world.Data;
+            if (data == null) return;
+            world.VisitPlacements(p =>
+            {
+                if (p.level != level) return;
+                int ddx = p.x - (int)px, ddz = p.z - (int)pz;
+                if (ddx > 28 || ddx < -28 || ddz > 28 || ddz < -28) return;
+                if (!data.locs.TryGetValue(p.locId, out var def)) return;
+                int shape = p.modelType;
+                if (shape == 0 || shape == 1 || shape == 2 || shape == 3 || shape == 9)
+                    DrawWall(p.x, p.z, shape, p.rotation, def.wallOrDoor != 0 ? DoorRed : WallWhite, cos, sin, px, pz);
+                if (def.mapScene >= 0)
+                    StampScene(def.mapScene, p.x + p.sizeX * 0.5f, p.z + p.sizeZ * 0.5f, cos, sin, px, pz);
+                if (def.mapArea >= 0 && Project(p.x + p.sizeX * 0.5f, p.z + p.sizeZ * 0.5f, px, pz, cos, sin, out float sx, out float sy))
+                {
+                    int ix = Mathf.RoundToInt(sx), iy = Mathf.RoundToInt(sy);
+                    if (ix >= 0 && iy >= 0 && ix < pageW && iy < pageH && framePx[iy * pageW + ix].a <= 16)
+                        funcIcons.Add(new FuncIcon { area = def.mapArea, x = frameRect.x + sx * s, y = frameRect.y + sy * s });
+                }
+            });
+        }
+
+        private void DrawWall(int tx, int tz, int shape, int rot, Color32 col, float cos, float sin, float px, float pz)
+        {
+            if (shape == 0 || shape == 2)
+            {
+                if (rot == 0) WallLine(tx, tz, tx, tz + 1, col, cos, sin, px, pz);
+                else if (rot == 1) WallLine(tx, tz + 1, tx + 1, tz + 1, col, cos, sin, px, pz);
+                else if (rot == 2) WallLine(tx + 1, tz, tx + 1, tz + 1, col, cos, sin, px, pz);
+                else WallLine(tx, tz, tx + 1, tz, col, cos, sin, px, pz);
+            }
+            else if (shape == 1 || shape == 9)
+            {
+                bool slash = shape == 9 ? (rot & 1) == 0 : (rot & 1) == 1;
+                if (slash) WallLine(tx, tz, tx + 1, tz + 1, col, cos, sin, px, pz);
+                else WallLine(tx, tz + 1, tx + 1, tz, col, cos, sin, px, pz);
+            }
+            else
+            {
+                float cx = tx + (rot == 1 || rot == 2 ? 0.85f : 0.15f);
+                float cz = tz + (rot == 0 || rot == 1 ? 0.85f : 0.15f);
+                if (Project(cx, cz, px, pz, cos, sin, out float sx, out float sy))
+                    Plot(Mathf.RoundToInt(sx), Mathf.RoundToInt(sy), col);
+            }
+        }
+
+        private void WallLine(float x0, float z0, float x1, float z1, Color32 col, float cos, float sin, float px, float pz)
+        {
+            if (!Project(x0, z0, px, pz, cos, sin, out float ax, out float ay)) return;
+            if (!Project(x1, z1, px, pz, cos, sin, out float bx, out float by)) return;
+            int x = Mathf.RoundToInt(ax), y = Mathf.RoundToInt(ay);
+            int ex = Mathf.RoundToInt(bx), ey = Mathf.RoundToInt(by);
+            int dx = Mathf.Abs(ex - x), dy = Mathf.Abs(ey - y);
+            int sx = x < ex ? 1 : -1, sy = y < ey ? 1 : -1;
+            int err = dx - dy;
+            for (int n = 0; n < 12; n++)
+            {
+                Plot(x, y, col);
+                if (x == ex && y == ey) break;
+                int e2 = err * 2;
+                if (e2 > -dy) { err -= dy; x += sx; }
+                if (e2 < dx) { err += dx; y += sy; }
+            }
+        }
+
+        private void Plot(int x, int y, Color32 col)
+        {
+            if (x < 0 || y < 0 || x >= pageW || y >= pageH) return;
+            if (framePx[y * pageW + x].a > 16) return;
+            pagePx[y * pageW + x] = col;
+        }
+
+        private void StampScene(int id, float wx, float wz, float cos, float sin, float px, float pz)
+        {
+            var pix = ScenePixels(id);
+            if (pix.px == null) return;
+            int sw = pix.w, sh = pix.h;
+            var src = pix.px;
+            for (int sy = 0; sy < sh; sy++)
+                for (int sx = 0; sx < sw; sx++)
+                {
+                    var c = src[sy * sw + sx];
+                    if (c.a < 16) continue;
+                    float lx = (sx + 0.5f - sw * 0.5f) / PixelsPerTile;
+                    float lz = (sh * 0.5f - (sy + 0.5f)) / PixelsPerTile;
+                    if (!Project(wx + lx, wz + lz, px, pz, cos, sin, out float ox, out float oy)) continue;
+                    Plot(Mathf.RoundToInt(ox), Mathf.RoundToInt(oy), c);
+                }
+        }
+
+        private bool Project(float wx, float wz, float px, float pz, float cos, float sin, out float x, out float y)
+        {
+            float dxw = wx - px, dzw = wz - pz;
+            float dx = dxw * cos - dzw * sin;
+            float dy = dxw * sin + dzw * cos;
+            x = (pageW - 1) * 0.5f + dx * PixelsPerTile;
+            y = (pageH - 1) * 0.5f - dy * PixelsPerTile;
+            return x >= -8f && y >= -8f && x < pageW + 8f && y < pageH + 8f;
+        }
+
+        private void DrawFuncIcons()
+        {
+            int s = OsrsUi.Scale;
+            for (int i = 0; i < funcIcons.Count; i++)
+            {
+                var icon = funcIcons[i];
+                var tex = FuncSprite(icon.area);
+                if (tex == null) continue;
+                float w = tex.width * s, h = tex.height * s;
+                GUI.DrawTexture(new Rect(icon.x - w * 0.5f, icon.y - h * 0.5f, w, h), tex, ScaleMode.StretchToFill, true);
+            }
+        }
+
+        private (int w, int h, Color32[] px) ScenePixels(int id)
+        {
+            if (scenePx.TryGetValue(id, out var pix))
+                return pix == null ? default : (sceneTex[id].width, sceneTex[id].height, pix);
+            var tex = LoadHud(Path.Combine("mapscene", id + ".png"));
+            sceneTex[id] = tex;
+            if (tex == null)
+            {
+                scenePx[id] = null;
+                return default;
+            }
+            var raw = tex.GetPixels32();
+            var top = new Color32[raw.Length];
+            for (int y = 0; y < tex.height; y++)
+                System.Array.Copy(raw, y * tex.width, top, (tex.height - 1 - y) * tex.width, tex.width);
+            scenePx[id] = top;
+            return (tex.width, tex.height, top);
+        }
+
+        private Texture2D FuncSprite(int area)
+        {
+            if (funcTex.TryGetValue(area, out var tex)) return tex;
+            tex = LoadHud(Path.Combine("mapfunc", area + ".png"));
+            funcTex[area] = tex;
+            return tex;
+        }
+
+        private static Texture2D LoadHud(string relative)
+        {
+            return LoadTex(Path.Combine(Application.streamingAssetsPath, "ui", "hud", relative));
         }
 
         private void Load()
