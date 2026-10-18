@@ -183,9 +183,7 @@ namespace OsrsPort
         {
             if (stage == Stage.Done || link == null) return;
             EnsureStyles();
-            GUI.color = new Color(0.08f, 0.06f, 0.04f, 1f);
-            GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
-            GUI.color = Color.white;
+            OsrsTitle.Draw();
 
             switch (stage)
             {
@@ -207,18 +205,19 @@ namespace OsrsPort
 
         private void DrawEnterName()
         {
-            var r = Panel(420, 210);
-            GUI.Label(new Rect(r.x, r.y + 14, r.width, 30), "Welcome to Old School RuneScape", titleStyle);
-            GUI.Label(new Rect(r.x, r.y + 56, r.width, 22), "Enter your username (1-12 characters):", smallStyle);
             bool enter = EnterPressed();
             GUI.SetNextControlName("osrs-login-name");
-            nameInput = GUI.TextField(new Rect(r.x + 60, r.y + 84, r.width - 120, 34), nameInput, 12, fieldStyle);
+            nameInput = GUI.TextField(OsrsTitle.LoginField(), nameInput, 12, fieldStyle);
             GUI.FocusControl("osrs-login-name");
-            if (GUI.Button(new Rect(r.x + 130, r.y + 140, r.width - 260, 40), "Login", buttonStyle) || enter)
+            var button = OsrsTitle.LoginButton();
+            if (GUI.Button(button, GUIContent.none, GUIStyle.none) || enter)
             {
                 if (enter) Event.current.Use();
                 SubmitName();
             }
+            var login = new GUIStyle(labelStyle) { alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
+            login.normal.textColor = Color.white;
+            GUI.Label(button, "Login", login);
         }
 
         private void DrawConnecting()

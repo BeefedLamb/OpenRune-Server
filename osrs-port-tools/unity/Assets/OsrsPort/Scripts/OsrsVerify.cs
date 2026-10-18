@@ -69,6 +69,18 @@ namespace OsrsPort
                 yield break;
             }
             var design = link.GetComponent<OsrsCharacterDesign>();
+            if (shotFile != null && shotFile.IndexOf("title", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                float shown = Time.realtimeSinceStartup + 4f;
+                while (Time.realtimeSinceStartup < shown) yield return null;
+                yield return new WaitForEndOfFrame();
+                ScreenCapture.CaptureScreenshot(shotFile);
+                float wrote = Time.realtimeSinceStartup + 2f;
+                while (!File.Exists(shotFile) && Time.realtimeSinceStartup < wrote) yield return null;
+                Note("wrote " + shotFile);
+                Finish("title shot");
+                yield break;
+            }
             until = Time.realtimeSinceStartup + 45f;
             while (OsrsCharacterDesign.Active && Time.realtimeSinceStartup < until)
             {

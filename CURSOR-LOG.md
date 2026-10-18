@@ -193,3 +193,23 @@ What works: the top of the view is the courtyard. The arms come in from the bott
 Still a rest pose. The forearms sit nearer the bottom centre than the extreme corners, and the sword is only the tip. Walk and attack on the arms are task 5.
 
 Where this stopped: the arm placement is in. Task 2 (login screen) is next.
+
+### 2. Login screen, first step
+
+On Play, once the player exists, the login screen is the cache title instead of the brown panel. The world still loads behind it. The screen is covered as soon as the login UI draws.
+
+Files changed:
+
+- `osrs-port-tools/exporter/export_title.py` — writes `ui/title.jpg` (index 10, archive `title.jpg`, 383x503, the left half) and the index-8 sprites `logo`, `titlebox`, and `titlebutton` as PNG. Run into `E:\osrs\My project\Assets\StreamingAssets`. Those binaries stay untracked.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsTitle.cs` — mirrors `title.jpg` to 765x503, composites the logo at (234, 8), the box at (202, 200) and the button at (308, 320), and draws that page scaled to the window with black bars. Plays song 0 (Scape Main) once when the screen shows. The same file is in `E:\osrs\My project\Assets\OsrsPort\Scripts`.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsCharacterDesign.cs` — the username field and Login sit on that page. Character design is unchanged and still only appears on a first login. The same file is in the Unity project.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsWorldLoader.cs` — the debug square-count line is hidden while the login screen is up.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsVerify.cs` — a shot path containing "title" saves the login screen and stops, without logging in.
+
+The cache page itself is `E:\osrs\title-composed.png`. Ours, from the Unity game view, logged in as the name Lamb and waiting on Login: `E:\osrs\title-screen.png`. Unity 6000.6.5f1, no CS errors. The editor log shows `music track=0 voices=6 peak=0.000 dur=196.9s notes=6764 plays=1`. Peak 0 is the probe before the first audible buffer; the song is the one that starts.
+
+What works: the stone hall, the Old School logo, the login box and the stone Login button are the cache sprites, laid out at 765x503 and scaled to the window. The username field and Login are on the box. Scape Main starts with the screen. Returning accounts still skip character design.
+
+Still missing from task 2: the animated rune flames, text in the cache fonts (the field and the word Login are Unity's IMGUI font), and showing this screen before the world starts loading. The world load is covered once the login UI is up.
+
+Where this stopped: the static title is in and screenshotted. Flames and cache fonts are the rest of task 2.

@@ -1059,6 +1059,7 @@ namespace OsrsPort
 
         private void OnGUI()
         {
+            if (OsrsCharacterDesign.Active) return;
             var link = OsrsServerLink.Instance;
             string text = status;
             if (link != null)
