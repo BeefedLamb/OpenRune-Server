@@ -12,23 +12,35 @@ namespace OsrsPort
     {
         private const float PixelsPerTile = 4f;
 
+        private const int MaskX = 25;
+        private const int MaskY = 5;
+        private const float HoleCx = 15.5f;
+        private const float HoleCy = 16f;
+        private const float CompassScale = 1.25f;
+
         private Texture2D frameTex;
-        private Texture2D compassTex;
         private Texture2D arrowTex;
         private Texture2D[] dots;
         private Texture2D orbFrame;
         private Texture2D orbHp, orbPrayer, orbRun, orbSpec;
         private Texture2D iconHp, iconPrayer, iconWalk, iconRun, iconSpec;
         private Color32[] framePx;
+        private Color32[] maskPx;
+        private Color32[] compassPx;
+        private int maskW, maskH, compassW, compassH;
+        private float mapCx, mapCy;
         private Texture2D page;
         private Color32[] pagePx;
         private int pageW, pageH;
+        private Color32[][] dotPx;
+        private int[] dotW, dotH;
         private int builtFrame = -1;
         private OsrsFont numbers;
         private Rect frameRect, compassRect;
         private readonly Dictionary<int, Texture2D> sceneTex = new Dictionary<int, Texture2D>();
         private readonly Dictionary<int, Color32[]> scenePx = new Dictionary<int, Color32[]>();
         private readonly Dictionary<int, Texture2D> funcTex = new Dictionary<int, Texture2D>();
+        private readonly Dictionary<int, Color32[]> funcPx = new Dictionary<int, Color32[]>();
         private readonly List<FuncIcon> funcIcons = new List<FuncIcon>();
         private static readonly Color32 WallWhite = new Color32(238, 238, 238, 255);
         private static readonly Color32 DoorRed = new Color32(238, 0, 0, 255);
@@ -36,7 +48,7 @@ namespace OsrsPort
         private struct FuncIcon
         {
             public int area;
-            public float x, y;
+            public int x, y;
         }
         private Rect[] orbRects = new Rect[4];
 
@@ -72,16 +84,14 @@ namespace OsrsPort
             if (Event.current.type == EventType.Repaint && builtFrame != Time.frameCount)
             {
                 builtFrame = Time.frameCount;
-                Build(body, world, link.CurrentLevel);
+                Build(body, world, link);
             }
             int depth = GUI.depth;
             GUI.depth = -20;
             if (page != null)
                 GUI.DrawTexture(frameRect, page, ScaleMode.StretchToFill, true);
-            DrawDots(body, link);
-            DrawFuncIcons();
-            DrawCompass(body);
-            DrawOrbs(link);
+            DrawArrow();
+            if (!OsrsFrame.Showing) DrawOrbs(link);
             GUI.depth = depth;
             if (Event.current.type == EventType.MouseDown && Event.current.button == 0
                 && compassRect.Contains(Event.current.mousePosition))
@@ -110,19 +120,30 @@ namespace OsrsPort
                 fy = 2 * s;
             }
             frameRect = new Rect(fx, fy, fw, fh);
-            compassRect = new Rect(fx + fw / 2 - 25 * s, fy - 6 * s, 51 * s, 51 * s);
-            int x = fx - 52 * s;
-            int y = fy + 8 * s;
-            for (int i = 0; i < 4; i++)
-                orbRects[i] = new Rect(x, y + i * 36 * s, 57 * s, 34 * s);
+            compassRect = new Rect(fx, fy, 32 * s, 33 * s);
+            if (OsrsFrame.Showing)
+            {
+                orbRects[0] = OsrsUi.Page(516, 41, 57, 34);
+                orbRects[1] = OsrsUi.Page(516, 75, 57, 34);
+                orbRects[2] = OsrsUi.Page(526, 107, 57, 34);
+                orbRects[3] = OsrsUi.Page(548, 132, 57, 34);
+            }
+            else
+            {
+                int x = fx - 52 * s;
+                int y = fy + 8 * s;
+                for (int i = 0; i < 4; i++)
+                    orbRects[i] = new Rect(x, y + i * 36 * s, 57 * s, 34 * s);
+            }
         }
 
-        private void Build(Transform body, OsrsWorldLoader world, int level)
+        private void Build(Transform body, OsrsWorldLoader world, OsrsServerLink link)
         {
+            int level = link.CurrentLevel;
             float yaw = body.eulerAngles.y * Mathf.Deg2Rad;
             float cos = Mathf.Cos(yaw), sin = Mathf.Sin(yaw);
             float px = body.position.x, pz = body.position.z;
-            float cx = (pageW - 1) * 0.5f, cy = (pageH - 1) * 0.5f;
+            float cx = mapCx, cy = mapCy;
             for (int y = 0; y < pageH; y++)
                 for (int x = 0; x < pageW; x++)
                 {
@@ -133,6 +154,11 @@ namespace OsrsPort
                         pagePx[i] = fp;
                         continue;
                     }
+                    if (CompassSocket(x, y) || !InCircle(x, y))
+                    {
+                        pagePx[i] = new Color32(0, 0, 0, 0);
+                        continue;
+                    }
                     float dx = (x - cx) / PixelsPerTile;
                     float dy = (cy - y) / PixelsPerTile;
                     int wx = Mathf.FloorToInt(px + dx * cos + dy * sin);
@@ -140,6 +166,9 @@ namespace OsrsPort
                     pagePx[i] = world.TryTileColor(wx, wz, level, out var col) ? col : new Color32(0, 0, 0, 255);
                 }
             DrawFeatures(body, world, level, cos, sin, px, pz);
+            StampFuncIcons();
+            StampDots(body, link);
+            BakeCompass(body.eulerAngles.y);
             var up = new Color32[pagePx.Length];
             for (int y = 0; y < pageH; y++)
                 System.Array.Copy(pagePx, y * pageW, up, (pageH - 1 - y) * pageW, pageW);
@@ -147,7 +176,16 @@ namespace OsrsPort
             page.Apply(false);
         }
 
-        private void DrawDots(Transform body, OsrsServerLink link)
+        private void DrawArrow()
+        {
+            if (arrowTex == null) return;
+            int s = OsrsUi.Scale;
+            float ax = frameRect.x + mapCx * s - arrowTex.width * s * 0.5f;
+            float ay = frameRect.y + mapCy * s - arrowTex.height * s * 0.5f;
+            GUI.DrawTexture(new Rect(ax, ay, arrowTex.width * s, arrowTex.height * s), arrowTex, ScaleMode.StretchToFill, true);
+        }
+
+        private void StampDots(Transform body, OsrsServerLink link)
         {
             float yaw = body.eulerAngles.y * Mathf.Deg2Rad;
             float cos = Mathf.Cos(yaw), sin = Mathf.Sin(yaw);
@@ -157,45 +195,74 @@ namespace OsrsPort
             {
                 if (n.level != level) continue;
                 int dot = string.IsNullOrEmpty(n.playerName) ? 1 : 2;
-                Mark(n.x + 0.5f, n.z + 0.5f, px, pz, cos, sin, dot);
+                StampSprite(n.x + 0.5f, n.z + 0.5f, px, pz, cos, sin, DotPixels(dot));
             }
             foreach (var g in link.groundItems)
             {
                 if (g.level != level) continue;
-                Mark(g.x + 0.5f, g.z + 0.5f, px, pz, cos, sin, 0);
-            }
-            if (arrowTex != null)
-            {
-                int s = OsrsUi.Scale;
-                float ax = frameRect.x + frameRect.width * 0.5f - arrowTex.width * s * 0.5f;
-                float ay = frameRect.y + frameRect.height * 0.5f - arrowTex.height * s * 0.5f;
-                GUI.DrawTexture(new Rect(ax, ay, arrowTex.width * s, arrowTex.height * s), arrowTex, ScaleMode.StretchToFill, true);
+                StampSprite(g.x + 0.5f, g.z + 0.5f, px, pz, cos, sin, DotPixels(0));
             }
         }
 
-        private void Mark(float wx, float wz, float px, float pz, float cos, float sin, int dot)
+        private (int w, int h, Color32[] px) DotPixels(int dot)
         {
-            if (dots == null || dot < 0 || dot >= dots.Length || dots[dot] == null) return;
-            float dx = wx - px, dz = wz - pz;
-            float dxp = dx * cos - dz * sin;
-            float dyp = dx * sin + dz * cos;
-            int s = OsrsUi.Scale;
-            float x = frameRect.x + (pageW - 1) * 0.5f * s + dxp * PixelsPerTile * s;
-            float y = frameRect.y + (pageH - 1) * 0.5f * s - dyp * PixelsPerTile * s;
-            int ix = Mathf.RoundToInt((x - frameRect.x) / s), iy = Mathf.RoundToInt((y - frameRect.y) / s);
-            if (ix < 0 || iy < 0 || ix >= pageW || iy >= pageH) return;
-            if (framePx[iy * pageW + ix].a > 16) return;
-            var t = dots[dot];
-            GUI.DrawTexture(new Rect(x - t.width * s * 0.5f, y - t.height * s * 0.5f, t.width * s, t.height * s), t, ScaleMode.StretchToFill, true);
+            if (dotPx == null || dot < 0 || dot >= dotPx.Length || dotPx[dot] == null) return default;
+            return (dotW[dot], dotH[dot], dotPx[dot]);
         }
 
-        private void DrawCompass(Transform body)
+        private void StampSprite(float wx, float wz, float px, float pz, float cos, float sin, (int w, int h, Color32[] px) sprite)
         {
-            if (compassTex == null) return;
-            var saved = GUI.matrix;
-            GUIUtility.RotateAroundPivot(-body.eulerAngles.y, compassRect.center);
-            GUI.DrawTexture(compassRect, compassTex, ScaleMode.StretchToFill, true);
-            GUI.matrix = saved;
+            if (sprite.px == null) return;
+            if (!Project(wx, wz, px, pz, cos, sin, out float sx, out float sy)) return;
+            int ox = Mathf.RoundToInt(sx) - sprite.w / 2;
+            int oy = Mathf.RoundToInt(sy) - sprite.h / 2;
+            for (int y = 0; y < sprite.h; y++)
+                for (int x = 0; x < sprite.w; x++)
+                {
+                    var c = sprite.px[y * sprite.w + x];
+                    if (c.a < 16) continue;
+                    Plot(ox + x, oy + y, c);
+                }
+        }
+
+        private void BakeCompass(float yawDeg)
+        {
+            if (compassPx == null) return;
+            float rad = -yawDeg * Mathf.Deg2Rad;
+            float cos = Mathf.Cos(rad), sin = Mathf.Sin(rad);
+            int x1 = Mathf.Min(34, pageW), y1 = Mathf.Min(34, pageH);
+            for (int y = 0; y < y1; y++)
+                for (int x = 0; x < x1; x++)
+                {
+                    if (!CompassSocket(x, y)) continue;
+                    float dx = x - HoleCx, dy = y - HoleCy;
+                    float lx = dx * cos + dy * sin;
+                    float ly = -dx * sin + dy * cos;
+                    int u = Mathf.RoundToInt(compassW * 0.5f - 0.5f + lx * CompassScale);
+                    int v = Mathf.RoundToInt(compassH * 0.5f - 0.5f + ly * CompassScale);
+                    if (u < 0 || v < 0 || u >= compassW || v >= compassH) continue;
+                    pagePx[y * pageW + x] = compassPx[v * compassW + u];
+                }
+        }
+
+        private bool CompassSocket(int x, int y)
+        {
+            if (x < 0 || y < 0 || x >= 34 || y >= 34 || x >= pageW || y >= pageH) return false;
+            return framePx[y * pageW + x].a <= 16;
+        }
+
+        private bool InCircle(int x, int y)
+        {
+            if (CompassSocket(x, y)) return false;
+            int mx = x - MaskX, my = y - MaskY;
+            if (maskPx == null || mx < 0 || my < 0 || mx >= maskW || my >= maskH) return false;
+            return maskPx[my * maskW + mx].a <= 16;
+        }
+
+        public void DrawHudOrbs()
+        {
+            var link = OsrsServerLink.Instance;
+            if (link != null) DrawOrbs(link);
         }
 
         private void DrawOrbs(OsrsServerLink link)
@@ -219,10 +286,9 @@ namespace OsrsPort
         {
             if (orbFrame == null) return;
             int s = OsrsUi.Scale;
-            var flipped = new Rect(well.x + well.width, well.y, -well.width, well.height);
-            GUI.DrawTexture(flipped, orbFrame, ScaleMode.StretchToFill, true);
+            GUI.DrawTexture(well, orbFrame, ScaleMode.StretchToFill, true);
             amount = Mathf.Clamp01(amount);
-            var circle = new Rect(well.x + 2 * s, well.y + 4 * s, 26 * s, 26 * s);
+            var circle = new Rect(well.x + 27 * s, well.y + 4 * s, 26 * s, 26 * s);
             if (fill != null && amount > 0f)
             {
                 float shown = 26f * s * amount;
@@ -235,14 +301,16 @@ namespace OsrsPort
             if (number >= 0 && numbers != null)
             {
                 int rgb = number <= 0 ? 0xFF0000 : number < 20 ? 0xFFFF00 : 0x00FF00;
-                numbers.DrawScreen(number.ToString(), Mathf.RoundToInt(well.x + 30 * s), Mathf.RoundToInt(well.y + 22 * s), rgb, true);
+                string label = number.ToString();
+                int tw = numbers.Width(label) * s;
+                int boxX = Mathf.RoundToInt(well.x + 4 * s);
+                numbers.DrawScreen(label, boxX + (23 * s - tw) / 2, Mathf.RoundToInt(well.y + 28 * s), rgb, true);
             }
         }
 
         private void DrawFeatures(Transform body, OsrsWorldLoader world, int level, float cos, float sin, float px, float pz)
         {
             funcIcons.Clear();
-            int s = OsrsUi.Scale;
             var data = world.Data;
             if (data == null) return;
             world.VisitPlacements(p =>
@@ -259,8 +327,8 @@ namespace OsrsPort
                 if (def.mapArea >= 0 && Project(p.x + p.sizeX * 0.5f, p.z + p.sizeZ * 0.5f, px, pz, cos, sin, out float sx, out float sy))
                 {
                     int ix = Mathf.RoundToInt(sx), iy = Mathf.RoundToInt(sy);
-                    if (ix >= 0 && iy >= 0 && ix < pageW && iy < pageH && framePx[iy * pageW + ix].a <= 16)
-                        funcIcons.Add(new FuncIcon { area = def.mapArea, x = frameRect.x + sx * s, y = frameRect.y + sy * s });
+                    if (InCircle(ix, iy))
+                        funcIcons.Add(new FuncIcon { area = def.mapArea, x = ix, y = iy });
                 }
             });
         }
@@ -311,7 +379,7 @@ namespace OsrsPort
         private void Plot(int x, int y, Color32 col)
         {
             if (x < 0 || y < 0 || x >= pageW || y >= pageH) return;
-            if (framePx[y * pageW + x].a > 16) return;
+            if (!InCircle(x, y)) return;
             pagePx[y * pageW + x] = col;
         }
 
@@ -338,21 +406,26 @@ namespace OsrsPort
             float dxw = wx - px, dzw = wz - pz;
             float dx = dxw * cos - dzw * sin;
             float dy = dxw * sin + dzw * cos;
-            x = (pageW - 1) * 0.5f + dx * PixelsPerTile;
-            y = (pageH - 1) * 0.5f - dy * PixelsPerTile;
+            x = mapCx + dx * PixelsPerTile;
+            y = mapCy - dy * PixelsPerTile;
             return x >= -8f && y >= -8f && x < pageW + 8f && y < pageH + 8f;
         }
 
-        private void DrawFuncIcons()
+        private void StampFuncIcons()
         {
-            int s = OsrsUi.Scale;
             for (int i = 0; i < funcIcons.Count; i++)
             {
                 var icon = funcIcons[i];
-                var tex = FuncSprite(icon.area);
-                if (tex == null) continue;
-                float w = tex.width * s, h = tex.height * s;
-                GUI.DrawTexture(new Rect(icon.x - w * 0.5f, icon.y - h * 0.5f, w, h), tex, ScaleMode.StretchToFill, true);
+                var pix = FuncPixels(icon.area);
+                if (pix.px == null) continue;
+                int ox = icon.x - pix.w / 2, oy = icon.y - pix.h / 2;
+                for (int y = 0; y < pix.h; y++)
+                    for (int x = 0; x < pix.w; x++)
+                    {
+                        var c = pix.px[y * pix.w + x];
+                        if (c.a < 16) continue;
+                        Plot(ox + x, oy + y, c);
+                    }
             }
         }
 
@@ -375,12 +448,20 @@ namespace OsrsPort
             return (tex.width, tex.height, top);
         }
 
-        private Texture2D FuncSprite(int area)
+        private (int w, int h, Color32[] px) FuncPixels(int area)
         {
-            if (funcTex.TryGetValue(area, out var tex)) return tex;
-            tex = LoadHud(Path.Combine("mapfunc", area + ".png"));
+            if (funcPx.TryGetValue(area, out var pix))
+                return pix == null ? default : (funcTex[area].width, funcTex[area].height, pix);
+            var tex = LoadHud(Path.Combine("mapfunc", area + ".png"));
             funcTex[area] = tex;
-            return tex;
+            if (tex == null)
+            {
+                funcPx[area] = null;
+                return default;
+            }
+            var top = TopLeft(tex);
+            funcPx[area] = top;
+            return (tex.width, tex.height, top);
         }
 
         private static Texture2D LoadHud(string relative)
@@ -393,8 +474,13 @@ namespace OsrsPort
             if (frameTex != null) return;
             string dir = Path.Combine(Application.streamingAssetsPath, "ui", "hud");
             frameTex = LoadTex(Path.Combine(dir, "mapback.png"));
-            compassTex = LoadTex(Path.Combine(dir, "compass.png"));
-            KeyCompass(compassTex);
+            var compassTex = LoadTex(Path.Combine(dir, "compass.png"));
+            if (compassTex != null)
+            {
+                compassW = compassTex.width;
+                compassH = compassTex.height;
+                compassPx = TopLeft(compassTex);
+            }
             arrowTex = LoadTex(Path.Combine(dir, "maparrow.png"));
             orbFrame = LoadTex(Path.Combine(dir, "orb_frame.png"));
             orbHp = LoadTex(Path.Combine(dir, "orb_hp.png"));
@@ -407,7 +493,38 @@ namespace OsrsPort
             iconRun = LoadTex(Path.Combine(dir, "icon_run.png"));
             iconSpec = LoadTex(Path.Combine(dir, "icon_spec.png"));
             dots = new Texture2D[3];
-            for (int i = 0; i < 3; i++) dots[i] = LoadTex(Path.Combine(dir, "mapdots" + i + ".png"));
+            dotPx = new Color32[3][];
+            dotW = new int[3];
+            dotH = new int[3];
+            for (int i = 0; i < 3; i++)
+            {
+                dots[i] = LoadTex(Path.Combine(dir, "mapdots" + i + ".png"));
+                if (dots[i] == null) continue;
+                dotW[i] = dots[i].width;
+                dotH[i] = dots[i].height;
+                dotPx[i] = TopLeft(dots[i]);
+            }
+            var maskTex = LoadTex(Path.Combine(Application.streamingAssetsPath, "ui", "if", "sprite", "1183.png"));
+            if (maskTex != null)
+            {
+                maskW = maskTex.width;
+                maskH = maskTex.height;
+                maskPx = TopLeft(maskTex);
+                long sx = 0, sy = 0, n = 0;
+                for (int y = 0; y < maskH; y++)
+                    for (int x = 0; x < maskW; x++)
+                    {
+                        if (maskPx[y * maskW + x].a > 16) continue;
+                        sx += x;
+                        sy += y;
+                        n++;
+                    }
+                if (n > 0)
+                {
+                    mapCx = MaskX + sx / (float)n;
+                    mapCy = MaskY + sy / (float)n;
+                }
+            }
             numbers = OsrsFont.Load(Path.Combine(Application.streamingAssetsPath, "ui", "p11.fnt"));
             if (numbers == null) numbers = OsrsTitle.Bold;
             if (frameTex == null) return;
@@ -420,22 +537,20 @@ namespace OsrsPort
             page = new Texture2D(pageW, pageH, TextureFormat.RGBA32, false);
             page.filterMode = FilterMode.Point;
             pagePx = new Color32[raw.Length];
+            if (mapCx == 0f && mapCy == 0f)
+            {
+                mapCx = (pageW - 1) * 0.5f;
+                mapCy = (pageH - 1) * 0.5f;
+            }
         }
 
-        private static void KeyCompass(Texture2D tex)
+        private static Color32[] TopLeft(Texture2D tex)
         {
-            if (tex == null) return;
-            var pix = tex.GetPixels32();
-            for (int i = 0; i < pix.Length; i++)
-            {
-                int mx = pix[i].r > pix[i].g ? pix[i].r : pix[i].g;
-                if (pix[i].b > mx) mx = pix[i].b;
-                int mn = pix[i].r < pix[i].g ? pix[i].r : pix[i].g;
-                if (pix[i].b < mn) mn = pix[i].b;
-                if (mx < 130 && mx - mn < 40) pix[i].a = 0;
-            }
-            tex.SetPixels32(pix);
-            tex.Apply(false);
+            var raw = tex.GetPixels32();
+            var top = new Color32[raw.Length];
+            for (int y = 0; y < tex.height; y++)
+                System.Array.Copy(raw, y * tex.width, top, (tex.height - 1 - y) * tex.width, tex.width);
+            return top;
         }
 
         private static Texture2D LoadTex(string path)

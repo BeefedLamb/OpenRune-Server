@@ -57,7 +57,11 @@ namespace OsrsPort
             GUI.depth = 10;
             DrawOutside();
             for (int i = 0; i < pieces.Length; i++)
+            {
+                if (pieces[i].sprite == 1183) continue;
                 DrawPiece(pieces[i]);
+            }
+            FindAnyObjectByType<OsrsMinimap>()?.DrawHudOrbs();
             DrawFilters();
             var interaction = FindAnyObjectByType<OsrsInteraction>();
             if (interaction != null) interaction.DrawGameMessages();

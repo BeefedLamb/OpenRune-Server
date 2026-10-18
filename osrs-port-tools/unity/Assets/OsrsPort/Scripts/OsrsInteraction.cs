@@ -746,7 +746,7 @@ namespace OsrsPort
             }
             bool caret = chatOpen && Mathf.FloorToInt(Time.time * 2f) % 2 == 0;
             string typed = chatOpen ? chatText + (caret ? "|" : "") : "*";
-            font.Draw("Player name: " + typed, 5, 470, 0x000000, false, false);
+            font.Draw(link.playerName + ": " + typed, 5, 470, 0x000000, false, false);
         }
 
         private void DrawHotbar()

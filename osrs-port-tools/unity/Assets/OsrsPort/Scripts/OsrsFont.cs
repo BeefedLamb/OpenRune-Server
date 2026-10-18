@@ -16,6 +16,7 @@ namespace OsrsPort
         }
 
         private readonly Glyph[] glyphs = new Glyph[256];
+        private int ascent;
 
         public static OsrsFont Load(string path)
         {
@@ -51,6 +52,8 @@ namespace OsrsPort
                     g.Tex = tex;
                 }
                 font.glyphs[i] = g;
+                int bottom = g.Oy + g.H;
+                if (bottom > font.ascent) font.ascent = bottom;
             }
             return font;
         }
@@ -98,8 +101,9 @@ namespace OsrsPort
                 var g = glyphs[c];
                 if (g.Tex != null)
                 {
-                    int top = y - (g.Oy + g.H) * s;
-                    var rect = page ? OsrsTitle.PageRect(x, top, g.W, g.H) : new Rect(x, top, g.W * s, g.H * s);
+                    int left = x + g.Ox * s;
+                    int top = y - (ascent - g.Oy) * s;
+                    var rect = page ? OsrsTitle.PageRect(left, top, g.W, g.H) : new Rect(left, top, g.W * s, g.H * s);
                     GUI.DrawTexture(rect, g.Tex, ScaleMode.StretchToFill, true);
                 }
                 x += g.Advance * s;

@@ -359,3 +359,18 @@ Ours: `E:\osrs\frame-inv.png`. The panel shows the bronze swords left in the bag
 
 Where this stopped: the frame, the chat box and the inventory icons are on screen. Next is the other side tabs (worn, skills, prayer, spellbook, combat, settings), then the interface packets, then Esc freeing the mouse.
 
+### 4. Font baseline, compass slot, map clip and orbs
+
+Chat glyphs now share one baseline. Each letter is drawn the way the client's font does: the line y is the baseline, the glyph sits at x + offsetX and y - ascent + offsetY, and ascent is the tallest glyph in that font (16 for p12). The compass rose is baked into the top-left hole of the map frame and rotates with the camera; the map, dots and map icons are stamped only where the circular mask is clear, so they no longer spill onto the stone. The four orbs use interface 160's wells on toplevel 548 component 25 (page 516,4): hitpoints (516,41), prayer (516,75), run (526,107), special (548,132), drawn over the frame. The circle is on the right of each well and the number on the left. The chat prompt is the logged-in name, "Lamb: *". The minimap mask sprite (1183) is not drawn as a graphic; it was covering the right of the compass.
+
+Files changed:
+
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFont.cs` — baseline and horizontal offset.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsMinimap.cs` — compass socket, circular clip, orb wells.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsFrame.cs` — orbs drawn after the frame; mask sprite skipped.
+- `osrs-port-tools/unity/Assets/OsrsPort/Scripts/OsrsInteraction.cs` — the prompt uses the player's name.
+
+The real frame: `E:\osrs\frame-wiki.png`. Ours: `E:\osrs\frame-fixes.png`. The welcome line and "Lamb: *" sit on the parchment. The compass is in the top-left socket with north up (the shot looks north). The orbs sit on the stone to the left of the ring.
+
+Where this stopped: those five fixes are in. Next is the other side tabs, driven by the server's interface packets, and Esc freeing the mouse. After that, resizable mode (toplevel 161) as the default.
+
